@@ -785,6 +785,7 @@ function getBaseCameraPos() {
 }
 function resizeThree() {
   const c = document.getElementById('threeContainer');
+  if (!c || !renderer || !camera) return;
   const w = c.clientWidth, h = c.clientHeight;
   if (!w || !h) return;
   renderer.setSize(w, h, false);
@@ -792,6 +793,19 @@ function resizeThree() {
   const base = getBaseCameraPos();
   STATE.camBaseY = base.y; STATE.camBaseFov = base.fov;
   applyCamera();
+  STATE._lastSize = { w, h };
+}
+// Catches any silent size drift each frame — covers:
+//   • the very first frame after switching from a hidden screen
+//   • orientation change on mobile
+//   • DevTools opening / window resize without a resize event
+function ensureCanvasSize() {
+  const c = document.getElementById('threeContainer');
+  if (!c || !renderer) return;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (!w || !h) return;
+  const last = STATE._lastSize;
+  if (!last || last.w !== w || last.h !== h) resizeThree();
 }
 function applyCamera() {
   const tx = STATE.camTargetX, tz = STATE.camTargetZ;
@@ -2359,6 +2373,15 @@ function setupInput() {
   c.addEventListener('pointerleave', onPointerCancel);
   c.addEventListener('wheel', onWheel, { passive:false });
   c.addEventListener('contextmenu', e => e.preventDefault());
+  // ResizeObserver: catch the moment the container becomes visible / changes size.
+  // The "solid-green" bug was caused by sizing the canvas while #gameScreen
+  // was display:none (clientWidth/clientHeight == 0).
+  if (typeof ResizeObserver !== 'undefined') {
+    try {
+      const ro = new ResizeObserver(() => { resizeThree(); });
+      ro.observe(c);
+    } catch (e) { /* ignore */ }
+  }
 }
 
 // =========================================================================
@@ -3397,6 +3420,7 @@ function cycleHandSlot(key) {
 function loop(ts) {
   requestAnimationFrame(loop);
   if (!STATE.running) return;
+  ensureCanvasSize();
   if (!STATE.lastTime) STATE.lastTime = ts;
   const dt = Math.min(0.05, (ts - STATE.lastTime) / 1000);
   STATE.lastTime = ts;
@@ -3613,7 +3637,6 @@ function startMatch(mission) {
   spawnMines(pickHazardCount());
   spawnObstacles(pickHazardCount());
   STATE.passives = {};
-  resizeThree();
   applyCamera();
   normalizeDeck();
   const fk = STATE.progress.playerFaction;
@@ -3646,6 +3669,13 @@ function startMatch(mission) {
   const _bf = document.getElementById('battlefield');
   if (_bf) _bf.classList.remove('orbit-on');
   renderHand(); updateHUD(); updateTowerPips();
+  // Critical: resize after the gameScreen becomes visible so the canvas gets real dimensions.
+  // Two rAFs: first lets `display:flex` apply, second lets layout settle.
+  requestAnimationFrame(() => {
+    resizeThree();
+    applyCamera();
+    requestAnimationFrame(() => { resizeThree(); applyCamera(); });
+  });
   requestAnimationFrame(loop);
 }
 
