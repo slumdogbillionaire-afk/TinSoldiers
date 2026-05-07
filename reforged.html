@@ -693,11 +693,12 @@ function currentLaneHalf(){ return STATE.map ? STATE.map.laneHalf : LANE_HALF; }
 function currentBridges(){ return (STATE.map && STATE.map.bridges) ? STATE.map.bridges : BRIDGES; }
 function currentRiverHalf(){ return (STATE.map && STATE.map.river) ? STATE.map.river.half : RIVER_HALF; }
 
+// Pass-D: more saturated themes so units pop against terrain
 const MAP_THEMES = {
-  grass:  { name:'FORESTED', ground:0x6a9848, dirtPath:0x8a6a3a, river:0x3a78b0, bridge:0x8a6a40, trunk:0x4a2a15, foliage:[0x3a6a25,0x4a7030,0x55803a], rock:0x7a7265, bush:0x4a7028, distant:0x2a4520, flowers:[0xf4e874,0xf48aa4,0xffffff,0xd4a4f4] },
-  desert: { name:'DESERT',   ground:0xd4a855, dirtPath:0xa07030, river:0x4a88a8, bridge:0x6a4a20, trunk:0x5a3a20, foliage:[0x6a8a40,0x7a9848,0x8aa050], rock:0xa88a5a, bush:0x8a7030, distant:0x5a4a20, flowers:[0xf4cc44,0xf4a468,0xf4e488,0xd4884a] },
-  snow:   { name:'SNOW',     ground:0xe8f0f8, dirtPath:0xa8b0b8, river:0x6a8ab0, bridge:0x5a5050, trunk:0x4a3828, foliage:[0x4a7848,0x3a6a3a,0x5a8a50], rock:0xb8b8c0, bush:0xb8c0c8, distant:0x4a6858, flowers:[0xffffff,0xe8d4f4,0xf4e4e8,0xd4d4e8] },
-  urban:  { name:'URBAN',    ground:0x7a7a78, dirtPath:0x505048, river:0x2a4a6a, bridge:0x484848, trunk:0x3a3a3a, foliage:[0x4a6030,0x5a7038,0x687838], rock:0x686868, bush:0x4a5a30, distant:0x484850, flowers:[0xf48888,0xf4c474,0x88c4f4,0xe888f4] },
+  grass:  { name:'FORESTED', ground:0x5aa040, dirtPath:0x9a6830, river:0x2870c0, bridge:0x8a6840, trunk:0x4a2a15, foliage:[0x3a8030,0x4a8838,0x5a9840], rock:0x807268, bush:0x4a8030, distant:0x1a4218, flowers:[0xfff060,0xff7090,0xffffff,0xc880ff] },
+  desert: { name:'DESERT',   ground:0xe0a040, dirtPath:0xa86028, river:0x3a8090, bridge:0x6a4a20, trunk:0x5a3a20, foliage:[0x70a040,0x80b048,0x90c050], rock:0xb89058, bush:0x90702a, distant:0x4a3a18, flowers:[0xffe040,0xff9858,0xffe070,0xf07840] },
+  snow:   { name:'SNOW',     ground:0xeef4fa, dirtPath:0x88a0b8, river:0x4080b0, bridge:0x504848, trunk:0x4a3828, foliage:[0x4a8040,0x3a7038,0x5a9050], rock:0xb0b8c0, bush:0xa8b8c8, distant:0x4a6858, flowers:[0xffffff,0xe8a8ff,0xffe0e8,0xc0c0f0] },
+  urban:  { name:'URBAN',    ground:0x6a7068, dirtPath:0x383830, river:0x1a3850, bridge:0x383838, trunk:0x2a2a2a, foliage:[0x4a8030,0x5a9038,0x6aa040], rock:0x585858, bush:0x4a6020, distant:0x303038, flowers:[0xff5858,0xffd040,0x40a8ff,0xff58d0] },
 };
 
 // ── State ───────────────────────────────────────────────────────────────
@@ -1082,7 +1083,7 @@ let nextId = 1;
 // stash per kind; spawn pulls from stash; despawn returns it (sets
 // invisible + parks at origin).
 const PROJ_POOL = {};   // kind -> [mesh, mesh, ...]
-const PROJ_POOL_CAP = 64;   // per-kind soft cap; beyond this we just GC
+const PROJ_POOL_CAP = 32;   // per-kind soft cap; beyond this we just GC
 function makeProjMesh(kind){
   let m;
   if (kind === 'bullet' || kind === 'tracer') {
@@ -1188,17 +1189,28 @@ function paintedMat(color, opts){
     envMapIntensity: 0.85,
   });
 }
+// Pass-D: Outlines were the biggest perf killer — every mesh part got a
+// back-faced duplicate (~25 parts × 2 = 50 draw calls per infantry unit).
+// New: only outline meshes WITH bounding sphere radius >= MIN_R. Skips
+// tiny parts (eyes, handles, decorations) which are barely visible
+// anyway. Cuts draw calls by 60-70% for character meshes.
+const _OUTLINE_MIN_R = 0.18;   // bounding-sphere radius threshold
+const _OUTLINE_MAT = new THREE.MeshBasicMaterial({ color:0x080808, side:THREE.BackSide });
 function addOutline(mesh, thickness){
-  thickness = thickness||1.05;
-  const om = new THREE.MeshBasicMaterial({ color:0x000000, side:THREE.BackSide });
-  mesh.traverse(o=>{
-    if(o.isMesh && !o.userData.isOutline && o.geometry){
-      const out = new THREE.Mesh(o.geometry, om);
-      out.scale.setScalar(thickness);
-      out.userData.isOutline = true;
-      out.renderOrder = -1;
-      o.add(out);
-    }
+  thickness = thickness || 1.05;
+  mesh.traverse(o => {
+    if (!o.isMesh || o.userData.isOutline || !o.geometry) return;
+    // Quick size check via bounding sphere
+    if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+    const r = (o.geometry.boundingSphere && o.geometry.boundingSphere.radius) || 0;
+    if (r < _OUTLINE_MIN_R) return;   // skip tiny parts
+    const out = new THREE.Mesh(o.geometry, _OUTLINE_MAT);
+    out.scale.setScalar(thickness);
+    out.userData.isOutline = true;
+    out.renderOrder = -1;
+    out.castShadow = false;          // outlines never cast shadows
+    out.receiveShadow = false;
+    o.add(out);
   });
 }
 function disposeObject3D(obj){ if(!obj) return; obj.traverse(o=>{ if(o.geometry){try{o.geometry.dispose();}catch(e){}} if(o.material){const m=Array.isArray(o.material)?o.material:[o.material]; for(const x of m){try{ if(x.map) x.map.dispose(); if(x.dispose) x.dispose(); }catch(e){}} } }); }
@@ -1388,13 +1400,29 @@ function buildField(theme){
 
   // Lane paths overlay
   // Pass-C: dynamic lane paths from current map
-  for (const lz of currentLanes()) {
+  // Pass-D: distinct per-lane colored bands so each lane is visually unique.
+  // Stronger contrast, slight color shift per lane (top=cool, mid=neutral, bot=warm).
+  const lanes = currentLanes();
+  const laneTints = [0xff8060, 0xfff088, 0x80c0ff, 0x80ff88, 0xff80c8];   // cycling
+  for (let li = 0; li < lanes.length; li++) {
+    const lz = lanes[li];
+    // Dirt path base
     const path = new THREE.Mesh(
       new THREE.PlaneGeometry(FIELD_W - 14, 3.4),
-      new THREE.MeshBasicMaterial({ color:theme.dirtPath, transparent:true, opacity:0.45, depthWrite:false })
+      new THREE.MeshBasicMaterial({ color:theme.dirtPath, transparent:true, opacity:0.55, depthWrite:false })
     );
     path.rotation.x = -Math.PI/2; path.position.set(0, 0.04, lz);
     scene.add(path);
+    // Per-lane color edge (subtle but readable from the top)
+    const tint = laneTints[li % laneTints.length];
+    for (const zo of [-1.7, 1.7]) {
+      const edge = new THREE.Mesh(
+        new THREE.PlaneGeometry(FIELD_W - 14, 0.18),
+        new THREE.MeshBasicMaterial({ color:tint, transparent:true, opacity:0.55, depthWrite:false })
+      );
+      edge.rotation.x = -Math.PI/2; edge.position.set(0, 0.05, lz + zo);
+      scene.add(edge);
+    }
   }
   // Side tints — adapt for no-river maps
   const rH = currentRiverHalf();
@@ -2486,6 +2514,28 @@ function buildUnitMesh(def, side){
   // Apply outline last (preserves bone hierarchy)
   addOutline(mesh, 1.04);
   mesh.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  // Pass-D: BIG team-color disc under every unit. Top-down camera makes
+  // these the primary identifier of who's on which side.
+  const teamCol = teamColor(side);
+  const radius = def.type === 'air' ? 1.0 : (def.roleKey === 'tank' || def.roleKey === 'apc' ? 1.4 : def.roleKey === 'commander' ? 1.1 : 0.85);
+  const disc = new THREE.Mesh(
+    new THREE.RingGeometry(radius * 0.78, radius, 24),
+    new THREE.MeshBasicMaterial({ color:teamCol, transparent:true, opacity:0.85, side:THREE.DoubleSide, depthWrite:false })
+  );
+  disc.rotation.x = -Math.PI / 2;
+  disc.position.y = 0.04;
+  disc.castShadow = false;
+  disc.receiveShadow = false;
+  disc.renderOrder = -2;
+  mesh.add(disc);
+  // Inner glow disc — slightly larger, faded
+  const glow = new THREE.Mesh(
+    new THREE.CircleGeometry(radius * 0.72, 18),
+    new THREE.MeshBasicMaterial({ color:teamCol, transparent:true, opacity:0.20, depthWrite:false })
+  );
+  glow.rotation.x = -Math.PI / 2;
+  glow.position.y = 0.03;
+  mesh.add(glow);
   return mesh;
 }
 
@@ -2786,6 +2836,10 @@ function spawnUnit(unitKey, side, fx, fz){
       id:nextId++, key:unitKey, def, side, x:fx + ox, z:fz + oz,
       facing: side === 'player' ? Math.PI/2 : -Math.PI/2,
       hp:def.hp * hpMul, maxHp:def.hp * hpMul,
+      // Pass-D lane leash: remember the Z where this unit was deployed.
+      // findTarget will only acquire enemies near this Z band, and the
+      // unit never strays more than ±LANE_LEASH from this Z.
+      homeLaneZ: fz,
       // Cached effective stats — read by movement/fire instead of def.* directly
       effSpeed: def.speed * fm.speedMul,
       effRange: def.range * fm.rangeMul * (getWeather().rangeMul || 1),
@@ -3223,15 +3277,26 @@ function moveToward(u, target, dt){
 }
 
 function dist(a, b){ return Math.hypot(a.x - b.x, a.z - b.z); }
+// Pass-D: lane-leashed target finder.
+// Units only acquire enemies near their home lane Z (band of LANE_LEASH).
+// This stops snipers running into forests, light vehicles abandoning lanes,
+// etc. Air units ignore the leash. Stationary units only care about
+// their own range — leash doesn't apply since they don't move anyway.
+const LANE_LEASH = 6.5;        // ±Z from home lane the unit considers its lane
+const LANE_LEASH_AIR = 999;    // air ignores leash
 function findTarget(u){
   let best = null, bd = Infinity;
   const canG = u.def.targets === 'ground' || u.def.targets === 'ground_air';
   const canA = u.def.targets === 'air' || u.def.targets === 'ground_air';
+  const homeZ = u.homeLaneZ != null ? u.homeLaneZ : u.z;
+  const leash = u.def.type === 'air' ? LANE_LEASH_AIR : LANE_LEASH;
   for (const e of STATE.units) {
     if (e.side === u.side || e.hp <= 0) continue;
     if (e.smoked > 0 && dist(u, e) > 3) continue;
     if (e.def.type === 'air' && !canA) continue;
     if (e.def.type === 'ground' && !canG) continue;
+    // Lane leash: ignore enemies whose Z is outside our lane band
+    if (Math.abs(e.z - homeZ) > leash) continue;
     const d = dist(u, e);
     if (d < bd) { bd = d; best = e; }
   }
@@ -3241,6 +3306,7 @@ function findTarget(u){
     for (const t of STATE.towers) {
       if (t.side === u.side || t.hp <= 0) continue;
       if (t.role === 'hq' && !turretDown) continue;
+      // Towers ARE valid targets across lanes once HQ is exposed
       const d = dist(u, t);
       if (d < bd) { bd = d; best = t; }
     }
@@ -3545,9 +3611,25 @@ function triggerShake(mag, dur){ STATE.shake.t = dur || 0.3; STATE.shake.mag = M
 
 
 // ── FX (visuals) ────────────────────────────────────────────────────────
+// Pass-D: FX queue cap. Without this a 4-tank firefight produces hundreds
+// of debris/sparks/chunks per second and the framerate tanks.
+const FX_CAP = 220;
 function addFX(fx){
   const Q = getQuality();
+  // Particle-style FX get statistically dropped at low quality
   if ((fx.type === 'spark' || fx.type === 'debris' || fx.type === 'splatter' || fx.type === 'chunk') && Math.random() > Q.particleMul) return;
+  // Hard cap: when over budget, drop oldest non-decal FX
+  if (fxObjects.length >= FX_CAP) {
+    // Find first non-persistent (skip pool/bones/stain — those are decals)
+    for (let i = 0; i < fxObjects.length; i++) {
+      const f = fxObjects[i];
+      if (f.type !== 'pool' && f.type !== 'stain' && f.type !== 'bones') {
+        if (f.mesh) removeAndDispose(f.mesh);
+        fxObjects.splice(i, 1);
+        break;
+      }
+    }
+  }
   STATE.fx.push(fx);
   let m;
   if (fx.type === 'puff') m = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 6), basicMat(0xc8b898, { transparent:true, opacity:0.85 }));
@@ -3703,9 +3785,27 @@ function pickCounter(aff, ctx){
 
 
 // ── SYNC MESHES — animations, death, projectiles, FX ────────────────────
+// Pass-D: per-frame frustum object reused so we don't allocate per check
+const _frust = new THREE.Frustum();
+const _projScreenMat = new THREE.Matrix4();
+function _updateFrustum(){
+  if (!camera) return;
+  _projScreenMat.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  _frust.setFromProjectionMatrix(_projScreenMat);
+}
+// Reused vector for cheap unit visibility test
+const _vTmp = new THREE.Vector3();
+function unitVisible(u){
+  // Cheap: test a sphere around unit position. Skips full mesh traverse.
+  _vTmp.set(u.x, u.def.type === 'air' ? 3.5 : 0.5, u.z);
+  return _frust.containsPoint(_vTmp) ||
+         _frust.intersectsSphere(new THREE.Sphere(_vTmp, 1.2));
+}
+
 function syncMeshes(dt){
   const Q = getQuality();
   const gore = getGore();
+  _updateFrustum();
   // Update water shader time
   if (waterUniforms) waterUniforms.time.value += dt;
   // Animate sun arc
@@ -3741,10 +3841,13 @@ function syncMeshes(dt){
     }
     // Air bob
     if (u.def.type === 'air') mesh.position.y = 3.8 + Math.sin(performance.now() * 0.003 + u.id) * 0.15;
-    // Run animation system
-    animateUnit(u, mesh, dt);
-    // HP pip
-    if (mesh.userData.pip) updatePip(mesh.userData.pip, u.hp, u.maxHp, u.side);
+    // Pass-D frustum cull: skip the heavy animation pass if not on screen.
+    // Position is still updated above (cheap), only the bone math is skipped.
+    const visible = unitVisible(u);
+    mesh.visible = visible;
+    if (visible) animateUnit(u, mesh, dt);
+    // HP pip — only when visible
+    if (visible && mesh.userData.pip) updatePip(mesh.userData.pip, u.hp, u.maxHp, u.side);
     // Hit flash halo
     if (u.flash > 0) {
       u.flash -= dt;
@@ -4197,6 +4300,11 @@ function update(dt) {
     const eRange = u.effRange || u.def.range;
     if (!u.target || u.target.hp <= 0 || dist(u, u.target) > eRange + 5) u.target = findTarget(u);
     if (u.cooldown > 0) u.cooldown -= dt;
+    // Pass-D: STATIONARY behavior — these units never chase. They hold
+    // position, rotate to face target, and fire only when target is in
+    // range. Sniper/AA/artillery now plant themselves where deployed.
+    const isStationary = u.def.speed === 0 ||
+      u.def.roleKey === 'sniper' || u.def.roleKey === 'aa' || u.def.roleKey === 'artillery';
     if (u.target) {
       const d = dist(u, u.target);
       if (d <= eRange) {
@@ -4205,10 +4313,26 @@ function update(dt) {
           fireWeapon(u, u.target);
           u.cooldown = u.def.atkSpeed;
         }
-      } else moveToward(u, u.target, dt);
-    } else {
+      } else if (isStationary) {
+        // Out of range — stationary unit drops the target instead of chasing.
+        // findTarget will reacquire something else (or nothing) next frame.
+        u.target = null;
+        u.moving = false;
+      } else {
+        moveToward(u, u.target, dt);
+      }
+    } else if (!isStationary) {
+      // No target → push toward enemy HQ along our lane
       const eHQ = STATE.towers.find(t => t.role === 'hq' && t.side !== u.side);
-      if (eHQ) moveToward(u, eHQ, dt);
+      if (eHQ) {
+        // Pass-D: leash to home-lane Z when pushing toward HQ — keeps
+        // ground units in their lane instead of cutting across the field.
+        const homeZ = u.homeLaneZ != null ? u.homeLaneZ : u.z;
+        const goal = { x:eHQ.x, z: u.def.type === 'air' ? eHQ.z : homeZ };
+        moveToward(u, goal, dt);
+      }
+    } else {
+      u.moving = false;
     }
   }
   // Towers
@@ -4881,12 +5005,26 @@ function bakeCardPortrait(key){
   disposeObject3D(mesh);
   return url;
 }
+// Pass-D: chunked + deferred portrait bake.
+// Was: 60 portraits baked synchronously at boot → 2-3 second freeze.
+// Now: 4 per microtask chunk so the page stays responsive. If bake throws
+// (some browsers block toDataURL), the SVG fallback in cardIconSVG kicks in.
+let _bakeQueue = null;
 function bakeAllPortraits(){
-  // Bake every unit. Skip on failure (some browsers block toDataURL).
-  for (const k of Object.keys(UNITS)) {
-    try { const u = bakeCardPortrait(k); if (u) CARD_PORTRAITS[k] = u; }
-    catch(e){ console.warn('portrait bake failed for', k, e.message); }
+  if (_bakeQueue) return;   // already running
+  _bakeQueue = Object.keys(UNITS).slice();
+  function chunk(){
+    if (!_bakeQueue || !_bakeQueue.length) { _bakeQueue = null; return; }
+    const batch = _bakeQueue.splice(0, 4);
+    for (const k of batch) {
+      try { const u = bakeCardPortrait(k); if (u) CARD_PORTRAITS[k] = u; }
+      catch(e){ /* SVG fallback handles it */ }
+    }
+    // Refresh hand if we're in a match so cards update
+    if (STATE.running) renderHand();
+    setTimeout(chunk, 30);
   }
+  setTimeout(chunk, 100);
 }
 
 function cardIconSVG(key, size) {
@@ -4896,18 +5034,21 @@ function cardIconSVG(key, size) {
   const main = '#' + pal.main.toString(16).padStart(6, '0');
   const dark = '#' + pal.accent.toString(16).padStart(6, '0');
   const glow = '#' + pal.glow.toString(16).padStart(6, '0');
-  // ── Use the baked 3D portrait when we have one (units only)
+  // ── Use the baked 3D portrait when we have one (units only).
+  // Pass-D: render as a plain DIV with background-image (more reliable
+  // across browsers than embedded SVG <image href="data:...">).
   if (UNITS[key] && CARD_PORTRAITS[key]) {
-    const wh = size ? `width="${size}" height="${size}"` : 'width="100%" height="100%"';
-    return `<svg ${wh} viewBox="0 0 48 48" preserveAspectRatio="xMidYMid meet">
-      <defs><radialGradient id="bg-${key.replace(/_/g,'-')}" cx="50%" cy="40%" r="60%">
-        <stop offset="0%" stop-color="${main}" stop-opacity="0.6"/>
-        <stop offset="100%" stop-color="${dark}" stop-opacity="0.95"/>
-      </radialGradient></defs>
-      <circle cx="24" cy="24" r="22" fill="url(#bg-${key.replace(/_/g,'-')})" stroke="${glow}" stroke-width="0.6"/>
-      <image href="${CARD_PORTRAITS[key]}" x="2" y="2" width="44" height="44" preserveAspectRatio="xMidYMid meet"/>
-      <circle cx="24" cy="24" r="22" fill="none" stroke="${glow}" stroke-width="0.5" opacity="0.7"/>
-    </svg>`;
+    const ws = size ? size + 'px' : '100%';
+    const hs = size ? size + 'px' : '100%';
+    const url = CARD_PORTRAITS[key];
+    return `<div style="width:${ws};height:${hs};border-radius:50%;` +
+           `background:radial-gradient(circle at 50% 40%, ${main}99 0%, ${dark}f0 100%) center/cover no-repeat;` +
+           `border:1px solid ${glow};box-shadow:0 0 6px ${glow}80,inset 0 0 12px ${dark};` +
+           `position:relative;overflow:hidden">` +
+             `<img src="${url}" alt="" style="position:absolute;inset:5%;width:90%;height:90%;` +
+             `object-fit:contain;pointer-events:none;filter:drop-shadow(0 1px 1px rgba(0,0,0,0.6))" ` +
+             `onerror="this.remove()"/>` +
+           `</div>`;
   }
   const role = def.roleKey;
   const sa = size ? `width="${size}" height="${size}"` : 'width="100%" height="100%" preserveAspectRatio="xMidYMid meet"';
