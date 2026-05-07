@@ -207,6 +207,7 @@
     <div class="current-faction" id="currentFaction">REBELS</div>
     <button class="menu-btn primary" onclick="goCampaign()">Campaign</button>
     <button class="menu-btn" onclick="quickSkirmish()">Quick Skirmish</button>
+    <button class="menu-btn" onclick="dailyBattle()" style="border-color:#f0c060;color:#ffe080">⭐ Daily Battle</button>
     <button class="menu-btn" onclick="goFactions()">Choose Faction</button>
     <button class="menu-btn" onclick="goLoadout()">Tower Loadout</button>
     <button class="menu-btn" onclick="goArmory()">Armory</button>
@@ -556,6 +557,142 @@ const DIFFICULTY = {
   hard:   { name:'HARD',   aiSpeedMul:1.25,aiSmartMul:1.15, enemyHpMul:1.15, enemyStartEnergy:7, playerStartEnergyBonus:0 },
   brutal: { name:'BRUTAL', aiSpeedMul:1.55,aiSmartMul:1.3,  enemyHpMul:1.35, enemyStartEnergy:9, playerStartEnergyBonus:0 },
 };
+// ── PASS-C: MAP ARCHETYPES ──────────────────────────────────────────────
+// Each match rolls one of these. Lane/bridge/tower geometry is per-map.
+// Tower X positions (player/enemy) are auto-mirrored at startMatch time.
+// `lanes` is an array of Z coords. `river.half` = 0 means no river.
+const MAP_ARCHETYPES = {
+  three_lanes: {
+    name: '3-LANE CLASSIC',
+    desc: 'River split, 3 bridges, 3 lanes. Default battle.',
+    lanes: [-9.5, 0, 9.5],
+    laneHalf: 3.6,
+    river: { half: 1.0 },
+    bridges: [{ z:-9.5, halfLength:2.2 }, { z:0, halfLength:2.2 }, { z:9.5, halfLength:2.2 }],
+    towerZs: [-9.5, 0, 9.5],
+    towerX: 22,
+    treeWalls: [
+      { zMin:-18, zMax:-11.5 },
+      { zMin:-7.5, zMax:-2 },
+      { zMin: 2, zMax:7.5 },
+      { zMin: 11.5, zMax:18 },
+    ],
+    capturePoint: { x:0, z:0 },
+  },
+  open_field: {
+    name: 'OPEN FIELD',
+    desc: 'No lanes. Free movement. Scattered cover.',
+    lanes: [],
+    laneHalf: 0,
+    river: { half: 0.9 },
+    bridges: [{ z:-12, halfLength:3 }, { z:-4, halfLength:3 }, { z:4, halfLength:3 }, { z:12, halfLength:3 }],
+    towerZs: [-11, 0, 11],
+    towerX: 22,
+    treeWalls: [],
+    capturePoint: { x:0, z:0 },
+    extras: { obstacles:'rocks_dense' },
+  },
+  bridgehead: {
+    name: 'BRIDGEHEAD',
+    desc: 'Single chokepoint. One wide bridge. Defender advantage.',
+    lanes: [0],
+    laneHalf: 5,
+    river: { half: 1.6 },
+    bridges: [{ z:0, halfLength:5.5 }],
+    towerZs: [-7, 0, 7],   // central + 2 flanks
+    towerX: 22,
+    treeWalls: [
+      { zMin:-18, zMax:-6 },
+      { zMin:6, zMax:18 },
+    ],
+    capturePoint: { x:0, z:0 },
+  },
+  crossroads: {
+    name: 'CROSSROADS',
+    desc: '4 lanes meet at center. No river — full open exchanges.',
+    lanes: [-13, -4, 4, 13],
+    laneHalf: 3.0,
+    river: { half: 0 },
+    bridges: [],
+    towerZs: [-13, -4, 4, 13],
+    towerX: 22,
+    treeWalls: [
+      { zMin:-18, zMax:-15.5 },
+      { zMin:-11, zMax:-7 },
+      { zMin:-2, zMax:2 },
+      { zMin:7, zMax:11 },
+      { zMin:15.5, zMax:18 },
+    ],
+    capturePoint: { x:0, z:0 },
+  },
+  twin_forks: {
+    name: 'TWIN FORKS',
+    desc: '2 wide lanes. River split. Pick your push.',
+    lanes: [-7, 7],
+    laneHalf: 4,
+    river: { half: 1.0 },
+    bridges: [{ z:-7, halfLength:2.8 }, { z:7, halfLength:2.8 }],
+    towerZs: [-7, 7],
+    towerX: 22,
+    treeWalls: [
+      { zMin:-18, zMax:-11 },
+      { zMin:-3, zMax:3 },
+      { zMin:11, zMax:18 },
+    ],
+    capturePoint: { x:0, z:0 },
+  },
+  highground: {
+    name: 'HIGHGROUND',
+    desc: 'Elevated mesa at center. Hold the hill.',
+    lanes: [-9, 0, 9],
+    laneHalf: 3.4,
+    river: { half: 1.0 },
+    bridges: [{ z:-9, halfLength:2.2 }, { z:0, halfLength:2.2 }, { z:9, halfLength:2.2 }],
+    towerZs: [-9, 0, 9],
+    towerX: 22,
+    treeWalls: [
+      { zMin:-18, zMax:-11 },
+      { zMin:-7, zMax:-2 },
+      { zMin:2, zMax:7 },
+      { zMin:11, zMax:18 },
+    ],
+    capturePoint: { x:0, z:0, bonus:2 },   // Holding the hill is more valuable
+    extras: { highground:{ x:0, z:0, radius:8, height:1.4 } },
+  },
+};
+
+// ── PASS-C: WEATHER ────────────────────────────────────────────────────
+// Weather rolls per match. Each affects gameplay subtly.
+const WEATHERS = {
+  clear: { name:'CLEAR', desc:'Perfect visibility', rangeMul:1.0, sightMul:1.0, fogDensity:0, lightning:false, ashCloud:false },
+  fog:   { name:'FOG',   desc:'Range halved',      rangeMul:0.55, sightMul:0.7, fogDensity:1.7, lightning:false, ashCloud:false },
+  storm: { name:'STORM', desc:'Lightning hits random units',  rangeMul:0.85, sightMul:0.9, fogDensity:1.2, lightning:true, ashCloud:false },
+  ash:   { name:'ASH CLOUD', desc:'No air units allowed',     rangeMul:0.95, sightMul:0.85, fogDensity:1.4, lightning:false, ashCloud:true },
+};
+function getWeather(){ return WEATHERS[STATE.weatherKey || 'clear'] || WEATHERS.clear; }
+
+// Daily seed RNG — deterministic for "Battle of the Day"
+let _rngState = 0;
+function rngSeed(seed){ _rngState = seed >>> 0; if (_rngState === 0) _rngState = 1; }
+function rng(){
+  // xorshift32
+  _rngState ^= _rngState << 13; _rngState >>>= 0;
+  _rngState ^= _rngState >>> 17; _rngState >>>= 0;
+  _rngState ^= _rngState << 5;  _rngState >>>= 0;
+  return _rngState / 0xffffffff;
+}
+function rngPick(arr){ return arr[Math.floor(rng() * arr.length)]; }
+function dailySeed(){
+  const d = new Date();
+  return (d.getFullYear() * 10000 + (d.getMonth()+1) * 100 + d.getDate()) >>> 0;
+}
+
+// Helpers that read from STATE.map (with fallbacks for legacy paths)
+function currentLanes(){ return (STATE.map && STATE.map.lanes && STATE.map.lanes.length) ? STATE.map.lanes : [LANE_TOP_Z, LANE_MID_Z, LANE_BOT_Z]; }
+function currentLaneHalf(){ return STATE.map ? STATE.map.laneHalf : LANE_HALF; }
+function currentBridges(){ return (STATE.map && STATE.map.bridges) ? STATE.map.bridges : BRIDGES; }
+function currentRiverHalf(){ return (STATE.map && STATE.map.river) ? STATE.map.river.half : RIVER_HALF; }
+
 const MAP_THEMES = {
   grass:  { name:'FORESTED', ground:0x6a9848, dirtPath:0x8a6a3a, river:0x3a78b0, bridge:0x8a6a40, trunk:0x4a2a15, foliage:[0x3a6a25,0x4a7030,0x55803a], rock:0x7a7265, bush:0x4a7028, distant:0x2a4520, flowers:[0xf4e874,0xf48aa4,0xffffff,0xd4a4f4] },
   desert: { name:'DESERT',   ground:0xd4a855, dirtPath:0xa07030, river:0x4a88a8, bridge:0x6a4a20, trunk:0x5a3a20, foliage:[0x6a8a40,0x7a9848,0x8aa050], rock:0xa88a5a, bush:0x8a7030, distant:0x5a4a20, flowers:[0xf4cc44,0xf4a468,0xf4e488,0xd4884a] },
@@ -569,6 +706,12 @@ const STATE = {
   energy:5, maxEnergy:10, energyRate:1/2.4,
   enemyEnergy:5, enemyHand:[], enemyHandPool:[], enemyCooldowns:{},
   hand:[], cardCooldowns:{}, handSlots:[], deckQueue:[],
+  // Pass-C state
+  map:null, weatherKey:'clear', useDailySeed:false,
+  capture:{ side:null, progress:0, holder:null },   // capture point
+  supplyDrops:[],   // active parachute crates
+  supplyTimer:30,   // seconds until next drop
+  lightningTimer:8, // seconds until next storm strike
   units:[], projectiles:[], fx:[], towers:[], forestTrees:[], craters:[], obstacles:[], mines:[],
   timer:180, selectedCard:null, lastTime:0, currentMission:null, toastTimer:0,
   progress:null, armoryTab:'units', pendingMission:null,
@@ -1244,7 +1387,8 @@ function buildField(theme){
   scene.add(groundMesh);
 
   // Lane paths overlay
-  for (const lz of [LANE_TOP_Z, LANE_MID_Z, LANE_BOT_Z]) {
+  // Pass-C: dynamic lane paths from current map
+  for (const lz of currentLanes()) {
     const path = new THREE.Mesh(
       new THREE.PlaneGeometry(FIELD_W - 14, 3.4),
       new THREE.MeshBasicMaterial({ color:theme.dirtPath, transparent:true, opacity:0.45, depthWrite:false })
@@ -1252,19 +1396,21 @@ function buildField(theme){
     path.rotation.x = -Math.PI/2; path.position.set(0, 0.04, lz);
     scene.add(path);
   }
-  // Side tints
+  // Side tints — adapt for no-river maps
+  const rH = currentRiverHalf();
   for (const [side, col] of [[-1, 0x3070b0], [1, 0xb04030]]) {
+    const w = FIELD_W/2 - rH;
     const tint = new THREE.Mesh(
-      new THREE.PlaneGeometry(FIELD_W/2 - RIVER_HALF, FIELD_D),
+      new THREE.PlaneGeometry(Math.max(1, w), FIELD_D),
       new THREE.MeshBasicMaterial({ color:col, transparent:true, opacity:0.06, depthWrite:false })
     );
     tint.rotation.x = -Math.PI/2;
-    tint.position.set(side * (FIELD_W/4 + RIVER_HALF/2), 0.03, 0);
+    tint.position.set(side * (FIELD_W/4 + rH/2), 0.03, 0);
     scene.add(tint);
   }
   // Deploy zone marker
   deployZoneMesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(FIELD_W/2 - RIVER_HALF - 4, FIELD_D - 2),
+    new THREE.PlaneGeometry(Math.max(1, FIELD_W/2 - rH - 4), FIELD_D - 2),
     new THREE.MeshBasicMaterial({ color:0x4080d0, transparent:true, opacity:0, side:THREE.DoubleSide, depthWrite:false })
   );
   deployZoneMesh.rotation.x = -Math.PI/2;
@@ -1278,18 +1424,19 @@ function buildField(theme){
   rangePreviewMesh.rotation.x = -Math.PI/2;
   rangePreviewMesh.position.y = 0.07;
   scene.add(rangePreviewMesh);
-  // Bridges
-  for (const b of BRIDGES) {
+  // Bridges (Pass-C: dynamic per map, none if no river)
+  for (const b of currentBridges()) {
     const bg = new THREE.Group();
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(RIVER_HALF * 2.8, 0.18, b.halfLength * 2), toonMat(theme.bridge));
+    const bridgeWidth = Math.max(1.0, rH * 2.8);
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(bridgeWidth, 0.18, b.halfLength * 2), toonMat(theme.bridge));
     deck.position.y = 0.1; deck.castShadow = true; deck.receiveShadow = true; bg.add(deck);
     for (let zs of [-b.halfLength, b.halfLength]) {
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(RIVER_HALF * 2.8, 0.32, 0.08), toonMat(0x4a3020));
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(bridgeWidth, 0.32, 0.08), toonMat(0x4a3020));
       rail.position.set(0, 0.34, zs); bg.add(rail);
     }
     // Posts
     for (let zs of [-b.halfLength + 0.4, b.halfLength - 0.4]) {
-      for (let xs of [-RIVER_HALF * 1.3, RIVER_HALF * 1.3]) {
+      for (let xs of [-rH * 1.3, rH * 1.3]) {
         const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.5, 0.14), toonMat(0x3a2010));
         post.position.set(xs, 0.35, zs); bg.add(post);
       }
@@ -1348,7 +1495,10 @@ function buildWater(theme, tod){
     sunCol: { value: new THREE.Color(tod.sunHex) },
     sunDir: { value: new THREE.Vector3(0.6, 0.7, 0.4).normalize() },
   };
-  const waterGeo = new THREE.PlaneGeometry(RIVER_HALF * 2, FIELD_D + 30, 2, 40);
+  // Pass-C: river-less maps skip the water entirely
+  const rH = currentRiverHalf();
+  if (rH <= 0) { waterMesh = null; return; }
+  const waterGeo = new THREE.PlaneGeometry(rH * 2, FIELD_D + 30, 2, 40);
   const waterMat = new THREE.ShaderMaterial({
     uniforms: waterUniforms, transparent: true,
     vertexShader: `
@@ -1389,20 +1539,26 @@ function rebuildTrees(theme){
   STATE.forestTrees = [];
   treeObjects.forEach(m => removeAndDispose(m)); treeObjects.clear();
   const Q = getQuality();
-  const walls = [
-    { zMin:-FIELD_D/2 + 1, zMax:LANE_TOP_Z - 2 },
-    { zMin:LANE_TOP_Z + 2, zMax:LANE_MID_Z - 2 },
-    { zMin:LANE_MID_Z + 2, zMax:LANE_BOT_Z - 2 },
-    { zMin:LANE_BOT_Z + 2, zMax:FIELD_D/2 - 1 },
-  ];
+  // Pass-C: tree walls come from the current map archetype.
+  // If the map has none (open field), scatter sparse cover instead.
+  const map = STATE.map;
+  const rH = currentRiverHalf();
+  let walls;
+  if (map && map.treeWalls && map.treeWalls.length) {
+    walls = map.treeWalls;
+  } else {
+    // Open field — sprinkle scattered clumps as cover (one big "wall" with random skips)
+    walls = [{ zMin:-FIELD_D/2 + 1, zMax:FIELD_D/2 - 1, sparse:true }];
+  }
   for (const wall of walls) {
+    const sparse = wall.sparse ? 0.18 : 1.0;   // sparse maps drop most trees
     for (let x = -FIELD_W/2 + 5; x <= FIELD_W/2 - 5; x += 1.7) {
-      if (Math.abs(x) < RIVER_HALF + 1.8) continue;
+      if (Math.abs(x) < rH + 1.8) continue;
       for (let zRow = wall.zMin; zRow <= wall.zMax; zRow += 1.8) {
         const jx = x + (Math.random() - 0.5) * 1.0;
         const jz = zRow + (Math.random() - 0.5) * 0.9;
-        if (Math.abs(jx) < RIVER_HALF + 1.3) continue;
-        if (Math.random() > Q.drawTrees) continue;
+        if (Math.abs(jx) < rH + 1.3) continue;
+        if (Math.random() > Q.drawTrees * sparse) continue;
         if (Math.random() < 0.28) continue;
         addTree(jx, jz, theme);
       }
@@ -2599,18 +2755,26 @@ function animateUnit(u, mesh, dt){
 
 // ── GAME LOGIC: spawn, target, fire, AI ────────────────────────────────
 function getLaneForZ(z){
-  let best = { id:'top', z:LANE_TOP_Z }, bestD = Math.abs(z - LANE_TOP_Z);
-  const d1 = Math.abs(z - LANE_MID_Z); if (d1 < bestD) { best = { id:'mid', z:LANE_MID_Z }; bestD = d1; }
-  const d2 = Math.abs(z - LANE_BOT_Z); if (d2 < bestD) { best = { id:'bot', z:LANE_BOT_Z }; bestD = d2; }
+  // Pass-C: dynamic lanes from STATE.map. If no lanes (open field), return
+  // a virtual "free" lane that just clamps to the position.
+  const lanes = currentLanes();
+  if (!lanes.length) return { id:'free', z };
+  let best = { id:0, z:lanes[0] }, bd = Math.abs(z - lanes[0]);
+  for (let i = 1; i < lanes.length; i++) {
+    const d = Math.abs(z - lanes[i]);
+    if (d < bd) { bd = d; best = { id:i, z:lanes[i] }; }
+  }
   return best;
 }
 function spawnUnit(unitKey, side, fx, fz){
   const def = UNITS[unitKey]; if (!def) return;
   const count = def.count || 1;
-  if (def.type === 'ground' && def.speed > 0) {
+  // Pass-C: only snap to lane if the map actually has lanes (open field skips this)
+  if (def.type === 'ground' && def.speed > 0 && currentLanes().length) {
     const lane = getLaneForZ(fz);
+    const lh = currentLaneHalf();
     fz = lane.z + (fz - lane.z) * 0.3;
-    fz = Math.max(lane.z - LANE_HALF * 0.85, Math.min(lane.z + LANE_HALF * 0.85, fz));
+    fz = Math.max(lane.z - lh * 0.85, Math.min(lane.z + lh * 0.85, fz));
   }
   for (let i = 0; i < count; i++) {
     const ox = (i % 2) * 0.45 - 0.18;
@@ -2624,7 +2788,7 @@ function spawnUnit(unitKey, side, fx, fz){
       hp:def.hp * hpMul, maxHp:def.hp * hpMul,
       // Cached effective stats — read by movement/fire instead of def.* directly
       effSpeed: def.speed * fm.speedMul,
-      effRange: def.range * fm.rangeMul,
+      effRange: def.range * fm.rangeMul * (getWeather().rangeMul || 1),
       effDmgMul: fm.dmgMul,
       cooldown:0, target:null, spawnAnim:1.0,
       walkPhase:Math.random() * Math.PI * 2,
@@ -2657,30 +2821,42 @@ function createTowers(){
   const midT = 'gun';
   const pf = STATE.progress.playerFaction;
   const ef = STATE.currentMission ? STATE.currentMission.enemyFaction : 'empire';
+  // Pass-C: tower X comes from STATE.map (per-archetype). HQ X is fixed.
+  const map = STATE.map || { towerZs:[LANE_TOP_Z, LANE_MID_Z, LANE_BOT_Z], towerX:22 };
+  const towerZs = map.towerZs;
+  const pTX = -map.towerX, eTX = map.towerX;
   const pHQX = -FIELD_W/2 + 4, eHQX = FIELD_W/2 - 4;
-  const pTX = -FIELD_W/2 + 14, eTX = FIELD_W/2 - 14;
   function mk(side, fk, type, x, z, label, hpMul) {
     const T = TOWER_TYPES[type];
     return { side, faction:fk, role:'turret', type, x, z, hp:T.hp * hpMul, maxHp:T.hp * hpMul,
       dmg:T.dmg, range:T.range, atkSpeed:T.atkSpeed, radius:1.4, targets:T.targets, splash:T.splash || 0,
-      // windupTimer: rolls down from windup whenever a fresh target enters range.
-      // Tower can't fire until it hits 0. Units can deploy under cover briefly.
       windup:T.windup || 0.4, windupTimer:0, lastTargetId:null,
       label, flash:0, stunned:0, cooldown:0 };
   }
-  // Pass-A: HQ no longer attacks. Higher HP (was 5000 → 6500) since it's a
-  // target-only structure now. Range/dmg/atkSpeed kept for old-data compat
-  // but `targets:'none'` makes findNearestEnemyForTower skip it.
+  // Tower type per slot — first/last get the player's chosen top/bottom; rest get gun
+  function pickType(i, n) {
+    if (n === 1) return midT;
+    if (i === 0) return topT;
+    if (i === n - 1) return botT;
+    return midT;
+  }
+  function laneLabel(i, n) {
+    if (n === 1) return 'M';
+    if (i === 0) return 'T';
+    if (i === n - 1) return 'B';
+    return 'M' + i;
+  }
   const list = [
     { side:'player', faction:pf, role:'hq', type:'hq', x:pHQX, z:0, hp:6500, maxHp:6500, dmg:0, range:0, atkSpeed:99, radius:3, targets:'none', flash:0, stunned:0, cooldown:0 },
-    mk('player', pf, topT, pTX, LANE_TOP_Z, 'T', 1),
-    mk('player', pf, midT, pTX, LANE_MID_Z, 'M', 1),
-    mk('player', pf, botT, pTX, LANE_BOT_Z, 'B', 1),
     { side:'enemy', faction:ef, role:'hq', type:'hq', x:eHQX, z:0, hp:6500*ehp, maxHp:6500*ehp, dmg:0, range:0, atkSpeed:99, radius:3, targets:'none', flash:0, stunned:0, cooldown:0 },
-    mk('enemy', ef, topT, eTX, LANE_TOP_Z, 'T', ehp),
-    mk('enemy', ef, midT, eTX, LANE_MID_Z, 'M', ehp),
-    mk('enemy', ef, botT, eTX, LANE_BOT_Z, 'B', ehp),
   ];
+  for (let i = 0; i < towerZs.length; i++) {
+    const z = towerZs[i];
+    const type = pickType(i, towerZs.length);
+    const lab = laneLabel(i, towerZs.length);
+    list.push(mk('player', pf, type, pTX, z, lab, 1));
+    list.push(mk('enemy', ef, type, eTX, z, lab, ehp));
+  }
   for (const t of list) {
     t.id = nextId++;
     STATE.towers.push(t);
@@ -2715,6 +2891,230 @@ function updateTowerPips(){
   }
 }
 
+// ── PASS-C: CAPTURE POINT ──────────────────────────────────────────────
+// Midfield circle. While units of one side are nearby (and other side has
+// none), that side gains capture progress. Holder gets +1/+2 energy/sec.
+let _captureMesh = null, _captureFlag = null;
+// Pass-C: re-do the static field meshes when the rolled map differs from
+// what's currently in the scene. Cheap — just removes & re-adds.
+let _fieldStaticMeshes = [];
+function reinitFieldForMap(){
+  if (!scene) return;
+  // Tag and dispose previously-built field statics. Safer to just remove
+  // the heavy meshes (ground, water, paths, river tints, bridges) we re-create.
+  // We track them in _fieldStaticMeshes added during buildField.
+  for (const m of _fieldStaticMeshes) removeAndDispose(m);
+  _fieldStaticMeshes = [];
+  if (waterMesh) { removeAndDispose(waterMesh); waterMesh = null; }
+  if (deployZoneMesh) { removeAndDispose(deployZoneMesh); deployZoneMesh = null; }
+  if (rangePreviewMesh) { removeAndDispose(rangePreviewMesh); rangePreviewMesh = null; }
+  if (groundMesh) { removeAndDispose(groundMesh); groundMesh = null; }
+  buildField(getTheme());
+  buildWater(getTheme(), getTOD());
+}
+
+function spawnCapturePoint(){
+  if (_captureMesh) { removeAndDispose(_captureMesh); _captureMesh = null; }
+  if (!STATE.map || !STATE.map.capturePoint) return;
+  const cp = STATE.map.capturePoint;
+  STATE.capture = { side:null, progress:0, holder:null, x:cp.x, z:cp.z, radius:3.5, bonus: cp.bonus || 1 };
+  // Visual: glowing ring + flag pole
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(3.4, 3.7, 36),
+    new THREE.MeshBasicMaterial({ color:0xfff088, transparent:true, opacity:0.65, side:THREE.DoubleSide, depthWrite:false })
+  );
+  ring.rotation.x = -Math.PI/2; ring.position.y = 0.06; g.add(ring);
+  const inner = new THREE.Mesh(
+    new THREE.CircleGeometry(3.4, 24),
+    new THREE.MeshBasicMaterial({ color:0xffe040, transparent:true, opacity:0.10, depthWrite:false })
+  );
+  inner.rotation.x = -Math.PI/2; inner.position.y = 0.05; g.add(inner);
+  // Flag pole — color shifts with holder
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.4, 6), toonMat(0x202020));
+  pole.position.y = 1.2; g.add(pole);
+  const flag = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.45, 0.04), basicMat(0x808080));
+  flag.position.set(0.35, 2.0, 0); g.add(flag);
+  _captureFlag = flag;
+  g.position.set(cp.x, 0, cp.z);
+  scene.add(g);
+  _captureMesh = g;
+}
+function tickCapture(dt){
+  if (!STATE.capture) return;
+  const cp = STATE.capture;
+  if (!cp.x && cp.x !== 0) return;
+  // Count units of each side near the point
+  let p = 0, e = 0;
+  for (const u of STATE.units) {
+    if (u.hp <= 0) continue;
+    if (Math.hypot(u.x - cp.x, u.z - cp.z) > cp.radius) continue;
+    if (u.side === 'player') p++; else e++;
+  }
+  let target = null;
+  if (p > 0 && e === 0) target = 'player';
+  else if (e > 0 && p === 0) target = 'enemy';
+  // Capture progress (0..1). Holder is set when progress reaches 1.
+  if (target === cp.holder) {
+    cp.progress = Math.min(1, cp.progress + dt * 0.4);
+  } else if (target) {
+    cp.progress = Math.max(0, cp.progress - dt * 0.6);
+    if (cp.progress === 0) cp.holder = target;
+  } else {
+    cp.progress = Math.max(0, cp.progress - dt * 0.15);
+  }
+  // Holder gets bonus energy/sec
+  if (cp.holder && cp.progress >= 1) {
+    const e2 = cp.bonus * dt * (STATE.energyMul || 1);
+    if (cp.holder === 'player') STATE.energy = Math.min(STATE.maxEnergy, STATE.energy + e2);
+    else STATE.enemyEnergy = Math.min(STATE.maxEnergy, STATE.enemyEnergy + e2);
+  }
+  // Update flag color
+  if (_captureFlag) {
+    let col = 0x808080;
+    if (cp.holder === 'player') col = 0x4080d0;
+    else if (cp.holder === 'enemy') col = 0xd04030;
+    _captureFlag.material.color.setHex(col);
+    // Flag pulses when contested
+    if (target && target !== cp.holder) _captureFlag.scale.x = 1 + Math.sin(performance.now() * 0.008) * 0.2;
+    else _captureFlag.scale.x = 1;
+  }
+}
+
+// ── PASS-C: SUPPLY DROPS ───────────────────────────────────────────────
+// Crate parachutes in midfield. First side to reach it claims the bonus
+// (+3 energy, or in 30% of cases a free random unit at that location).
+function spawnSupplyDrop(){
+  // Pick a random midfield-ish spot
+  const z = (Math.random() - 0.5) * (FIELD_D - 8);
+  const x = (Math.random() - 0.5) * 16;   // around center
+  const drop = { id:nextId++, x, z, y:24, vy:-7, claimed:false, bonus: Math.random() < 0.3 ? 'unit' : 'energy', bonusAmt: 3 };
+  // Visual: crate + parachute
+  const g = new THREE.Group();
+  const crate = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.7), toonMat(0xa06030));
+  crate.position.y = 0.35; crate.castShadow = true; g.add(crate);
+  // Slats
+  for (let yp of [0.10, 0.60]) {
+    const s = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.05, 0.72), toonMat(0x402010));
+    s.position.y = yp; g.add(s);
+  }
+  // Stripe
+  const sup = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.18, 0.04), basicMat(0xfff088));
+  sup.position.set(0, 0.35, 0.36); g.add(sup);
+  // Parachute (sphere top, removed on land)
+  const chute = new THREE.Mesh(new THREE.SphereGeometry(1.4, 14, 8, 0, Math.PI*2, 0, Math.PI/2.2), basicMat(0xff8040, { transparent:true, opacity:0.85 }));
+  chute.position.y = 1.6; g.add(chute);
+  drop.chute = chute; drop.crate = crate;
+  // Glow ring on ground
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.4, 22), basicMat(0xfff088, { transparent:true, opacity:0.7, side:THREE.DoubleSide, depthWrite:false }));
+  ring.rotation.x = -Math.PI/2; ring.position.y = 0.02; g.add(ring);
+  drop.ring = ring;
+  g.position.set(x, drop.y, z);
+  drop.mesh = g;
+  scene.add(g);
+  STATE.supplyDrops.push(drop);
+  showToast('SUPPLY DROP INCOMING');
+  playSound('siren');
+}
+function tickSupplyDrops(dt){
+  if (!STATE.currentMission) return;
+  STATE.supplyTimer -= dt;
+  if (STATE.supplyTimer <= 0) {
+    spawnSupplyDrop();
+    STATE.supplyTimer = 30 + Math.random() * 25;
+  }
+  for (const d of STATE.supplyDrops) {
+    if (d.claimed) continue;
+    // Falling
+    if (d.y > 0.4) {
+      d.y += d.vy * dt;
+      if (d.y < 0.4) d.y = 0.4;
+      d.mesh.position.y = d.y;
+      // Parachute swing
+      if (d.chute) d.chute.rotation.z = Math.sin(performance.now() * 0.003) * 0.15;
+      // Pop chute when landed
+      if (d.y === 0.4 && d.chute) { d.mesh.remove(d.chute); d.chute = null; addFX({ type:'puff', x:d.x, y:0.3, z:d.z, t:0, dur:0.6 }); }
+    } else {
+      // Pulsing glow on ground
+      if (d.ring) {
+        d.ring.scale.setScalar(1 + Math.sin(performance.now() * 0.005) * 0.18);
+        d.ring.material.opacity = 0.5 + Math.sin(performance.now() * 0.005) * 0.2;
+      }
+      // Check claim
+      let nearestSide = null, nearestD = Infinity;
+      for (const u of STATE.units) {
+        if (u.hp <= 0) continue;
+        const dd = Math.hypot(u.x - d.x, u.z - d.z);
+        if (dd < 1.2 && dd < nearestD) { nearestD = dd; nearestSide = u.side; }
+      }
+      if (nearestSide) {
+        d.claimed = true;
+        if (d.bonus === 'energy') {
+          if (nearestSide === 'player') { STATE.energy = Math.min(STATE.maxEnergy, STATE.energy + d.bonusAmt); showToast('SUPPLY CLAIMED +3 ENERGY'); }
+          else STATE.enemyEnergy = Math.min(STATE.maxEnergy, STATE.enemyEnergy + d.bonusAmt);
+        } else {
+          // Spawn a free random unit at the drop site
+          const fk = nearestSide === 'player' ? STATE.progress.playerFaction : (STATE.currentMission ? STATE.currentMission.enemyFaction : 'empire');
+          const pool = ['rifleman','heavygunner','lightV','flamer','sniper'];
+          const pick = pool[Math.floor(Math.random() * pool.length)];
+          spawnUnit(fk + '_' + pick, nearestSide, d.x, d.z);
+          if (nearestSide === 'player') showToast('SUPPLY CLAIMED — FREE UNIT');
+        }
+        // Pop animation
+        addFX({ type:'flash', x:d.x, y:0.5, z:d.z, t:0, dur:0.3, size:1.2 });
+        addFX({ type:'ring', x:d.x, y:0.1, z:d.z, t:0, dur:0.7, size:2.5, color:0xfff088 });
+        playSound('paycheck');
+        if (d.mesh) removeAndDispose(d.mesh);
+        d.mesh = null;
+      }
+    }
+  }
+  STATE.supplyDrops = STATE.supplyDrops.filter(d => !d.claimed);
+}
+
+// ── PASS-C: WEATHER (lightning + ash + fog effect on Three.js fog) ─────
+function applyWeatherToScene(){
+  const w = getWeather();
+  if (!scene || !scene.fog) return;
+  const tod = getTOD();
+  const baseFar = tod.fogFar;
+  const baseNear = tod.fogNear;
+  scene.fog.near = baseNear / Math.max(0.5, w.fogDensity || 1);
+  scene.fog.far  = baseFar / Math.max(0.5, w.fogDensity || 1);
+}
+function tickWeather(dt){
+  const w = getWeather();
+  // Lightning strikes during STORM
+  if (w.lightning) {
+    STATE.lightningTimer -= dt;
+    if (STATE.lightningTimer <= 0) {
+      STATE.lightningTimer = 6 + Math.random() * 8;
+      // Pick a random unit to hit
+      const cands = STATE.units.filter(u => u.hp > 0);
+      if (cands.length) {
+        const tgt = cands[Math.floor(Math.random() * cands.length)];
+        // Telegraph + bolt
+        addFX({ type:'beam', x:tgt.x, y:30, z:tgt.z, tx:tgt.x, tz:tgt.z, t:0, dur:0.4, color:0xa0c8ff });
+        addFX({ type:'flash', x:tgt.x, y:1, z:tgt.z, t:0, dur:0.4, size:2 });
+        applyDamage(tgt, 220);
+        triggerShake(0.4, 0.4);
+        playSound('boom');
+      }
+    }
+  }
+  // ASH CLOUD: kill any active air units (and prevent new ones)
+  if (w.ashCloud) {
+    for (const u of STATE.units) {
+      if (u.hp > 0 && u.def && u.def.type === 'air') applyDamage(u, 999);
+    }
+  }
+}
+function applyWeatherToRange(u){
+  // Multiplied range (used by acquire); we mutate effRange at spawn time.
+  const w = getWeather();
+  return (w.rangeMul || 1);
+}
+
 function clearBattle(){
   STATE.units = []; STATE.projectiles = []; STATE.fx = []; STATE.towers = [];
   STATE.craters = [];
@@ -2726,13 +3126,27 @@ function clearBattle(){
   fxObjects = [];
   STATE.passives = {};
   STATE.bloodIntensity = 0;
+  // Pass-C: clean up capture point + supply drops + storm/lightning
+  if (_captureMesh) { removeAndDispose(_captureMesh); _captureMesh = null; }
+  _captureFlag = null;
+  STATE.capture = { side:null, progress:0, holder:null };
+  for (const d of (STATE.supplyDrops||[])) if (d.mesh) removeAndDispose(d.mesh);
+  STATE.supplyDrops = [];
+  STATE.supplyTimer = 25 + Math.random() * 15;
+  STATE.lightningTimer = 6 + Math.random() * 6;
   STATE.stats = { kills:0, allyDeaths:0, deployed:0, dmgDealt:0, dmgTaken:0 };
 }
 
-function needsBridge(u, t){ return u.def.type === 'ground' && ((u.x < 0) !== (t.x < 0)); }
+function needsBridge(u, t){
+  // Pass-C: only need a bridge if there's a river to cross
+  if (currentRiverHalf() <= 0) return false;
+  return u.def.type === 'ground' && ((u.x < 0) !== (t.x < 0));
+}
 function nearestBridge(z){
-  let best = BRIDGES[0], bd = Infinity;
-  for (const b of BRIDGES) { const d = Math.abs(b.z - z); if (d < bd) { bd = d; best = b; } }
+  const bridges = currentBridges();
+  if (!bridges.length) return null;
+  let best = bridges[0], bd = Infinity;
+  for (const b of bridges) { const d = Math.abs(b.z - z); if (d < bd) { bd = d; best = b; } }
   return best;
 }
 function moveToward(u, target, dt){
@@ -2754,12 +3168,16 @@ function moveToward(u, target, dt){
   }
   let goalX = target.x, goalZ = target.z;
   const myLane = getLaneForZ(u.z);
-  if (needsBridge(u, { x:goalX, z:goalZ })) {
-    const onBridge = Math.abs(u.x) < RIVER_HALF + 0.6 && BRIDGES.some(b => Math.abs(u.z - b.z) < b.halfLength);
+  const riverHalf = currentRiverHalf();
+  const bridges = currentBridges();
+  if (needsBridge(u, { x:goalX, z:goalZ }) && bridges.length) {
+    const onBridge = Math.abs(u.x) < riverHalf + 0.6 && bridges.some(b => Math.abs(u.z - b.z) < b.halfLength);
     if (!onBridge) {
-      const br = BRIDGES.find(b => Math.abs(b.z - myLane.z) < 2.0) || nearestBridge(u.z);
-      goalZ = br.z;
-      goalX = (u.x < 0) ? -RIVER_HALF - 0.4 : RIVER_HALF + 0.4;
+      const br = bridges.find(b => Math.abs(b.z - myLane.z) < 2.0) || nearestBridge(u.z);
+      if (br) {
+        goalZ = br.z;
+        goalX = (u.x < 0) ? -riverHalf - 0.4 : riverHalf + 0.4;
+      }
     }
   }
   const dx = goalX - u.x, dz = goalZ - u.z;
@@ -2780,12 +3198,12 @@ function moveToward(u, target, dt){
       u.z += (oz / od) * (min - od) * 0.5;
     }
   }
-  // River push
-  if (def.type === 'ground' && Math.abs(u.x) < RIVER_HALF) {
-    const onBridge = BRIDGES.some(b => Math.abs(u.z - b.z) < b.halfLength);
+  // River push (only if there's a river)
+  if (def.type === 'ground' && riverHalf > 0 && Math.abs(u.x) < riverHalf && bridges.length) {
+    const onBridge = bridges.some(b => Math.abs(u.z - b.z) < b.halfLength);
     if (!onBridge) {
-      const br = BRIDGES.find(b => Math.abs(b.z - myLane.z) < 2.0) || nearestBridge(u.z);
-      u.z += Math.sign(br.z - u.z) * speed * dt * 1.2;
+      const br = bridges.find(b => Math.abs(b.z - myLane.z) < 2.0) || nearestBridge(u.z);
+      if (br) u.z += Math.sign(br.z - u.z) * speed * dt * 1.2;
     }
   }
   // Tree chop
@@ -3722,6 +4140,10 @@ function update(dt) {
   }
   updateAI(dt);
   updateFactionPassives(dt);
+  // Pass-C: per-frame ticks
+  tickCapture(dt);
+  tickSupplyDrops(dt);
+  tickWeather(dt);
   // Commander aura
   for (const c of STATE.units) {
     if (!c.def.aura || c.hp <= 0) continue;
@@ -4123,6 +4545,8 @@ function attemptDeploy(key, x, z) {
   // Faction-adjusted cost (Mercs -1, others 0)
   const cost = unitCost(key);
   if (STATE.energy < cost) { showToast('NOT ENOUGH ENERGY'); playSound('ui_click'); return; }
+  // Pass-C: ASH CLOUD weather grounds air units
+  if (getWeather().ashCloud && def.type === 'air') { showToast('AIR GROUNDED — ASH CLOUD'); playSound('ui_click'); return; }
   const zMaxX = -RIVER_HALF - 1.2, zMinX = -FIELD_W/2 + 3.5;
   const zMaxZ = FIELD_D/2 - 1.5, zMinZ = -FIELD_D/2 + 1.5;
   if (x > zMaxX + 4 || x < zMinX - 4 || Math.abs(z) > zMaxZ + 4) { showToast('DEPLOY IN YOUR ZONE'); playSound('ui_click'); return; }
@@ -4548,11 +4972,38 @@ function startMatch(mission) {
   STATE.energy = 5 + (diff.playerStartEnergyBonus || 0);
   STATE.enemyEnergy = diff.enemyStartEnergy || 5;
   STATE.mode = mission.mode || '1v1';
+  // ── Pass-C: ROLL THE BOARD ─────
+  // Mission can lock map ('mapKey') or roll random. Daily seed mode rolls
+  // deterministically from today's date.
+  if (mission.useDailySeed || mission.dailySeed) {
+    rngSeed(dailySeed());
+    STATE.useDailySeed = true;
+  } else {
+    rngSeed((Math.random() * 0xffffffff) >>> 0);
+    STATE.useDailySeed = false;
+  }
+  const mapKeys = Object.keys(MAP_ARCHETYPES);
+  const mapKey = mission.mapKey || rngPick(mapKeys);
+  STATE.map = MAP_ARCHETYPES[mapKey];
+  // Roll weather (skip for first mission for fairness)
+  const weatherKeys = mission.id === 1 ? ['clear'] : Object.keys(WEATHERS);
+  STATE.weatherKey = mission.weatherKey || rngPick(weatherKeys);
+  // Reset map-derived state
+  applyWeatherToScene();   // updates fog density on existing scene
+  // Need to rebuild ALL field elements since map changed.
+  // Easiest: re-init the whole Three.js scene.
+  reinitFieldForMap();
   clearBattle();
   rebuildTrees();
   createTowers();
+  spawnCapturePoint();
+  applyWeatherToScene();
   STATE.passives = {};
   normalizeDeck();
+  // Pre-match toast: show map + weather rolled
+  setTimeout(() => {
+    showToast(STATE.map.name + ' • ' + getWeather().name + (STATE.useDailySeed ? ' • DAILY' : ''));
+  }, 250);
   const fk = STATE.progress.playerFaction;
   const pDeck = [...(STATE.progress.decks[fk] || [])];
   // Pass-B rotating hand: 4 visible slots. Rest live in a queue.
@@ -4681,6 +5132,13 @@ function quickSkirmish() {
   const eFK = ['empire','mercs','cult','rebels'].filter(f => f !== STATE.progress.playerFaction)[0];
   startMatch({ id:0, name:'Skirmish', desc:'Open battle', enemy:'Regulars', enemyFaction:eFK, aiSpeed:0.8, aiSmart:0.6, enemyHpMul:1, mode:STATE.progress.mode || '1v1' });
 }
+// Pass-C: Daily Battle — same map+weather all day, deterministic from date
+function dailyBattle() {
+  const eFK = ['empire','mercs','cult','rebels'].filter(f => f !== STATE.progress.playerFaction)[0];
+  startMatch({ id:0, name:'Daily Battle', desc:'Same map for everyone today', enemy:'Daily Foe',
+    enemyFaction:eFK, aiSpeed:0.85, aiSmart:0.65, enemyHpMul:1, mode:'1v1', useDailySeed:true });
+}
+window.dailyBattle = dailyBattle;
 function showHowTo() {
   alert(
     'TIN SOLDIERS REFORGED v9 — HOW TO PLAY\n\n' +
