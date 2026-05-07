@@ -342,6 +342,26 @@
   </div>
 </div>
 <script>
+// WebGL shim: some browsers (iOS Safari < 16, in-app WebViews like Twitter/LinkedIn,
+// some Chrome variants on low-power Android) return null from getShaderPrecisionFormat.
+// Three.js calls this during init and crashes. Patch with a sane fallback.
+(function patchWebGL() {
+  function shim(proto) {
+    if (!proto || !proto.getShaderPrecisionFormat) return;
+    const orig = proto.getShaderPrecisionFormat;
+    proto.getShaderPrecisionFormat = function() {
+      try {
+        const r = orig.apply(this, arguments);
+        if (r) return r;
+      } catch (e) {}
+      return { precision: 23, rangeMax: 127, rangeMin: 127 };
+    };
+  }
+  if (typeof WebGLRenderingContext !== 'undefined') shim(WebGLRenderingContext.prototype);
+  if (typeof WebGL2RenderingContext !== 'undefined') shim(WebGL2RenderingContext.prototype);
+})();
+</script>
+<script>
 (function loadThree() {
   const urls = ['https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js','https://unpkg.com/three@0.128.0/build/three.min.js','https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js'];
   let idx = 0;

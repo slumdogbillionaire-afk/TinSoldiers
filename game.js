@@ -451,7 +451,14 @@ function initThree() {
   scene.background = new THREE.Color(theme.sky);
   scene.fog = new THREE.Fog(theme.fog, 60, 180);
   camera = new THREE.PerspectiveCamera(40, 1, 0.3, 250);
-  renderer = new THREE.WebGLRenderer({ antialias: Q.postFX, powerPreference:'high-performance' });
+  // 'mediump' precision is more compatible on iOS Safari + low-power mobile GPUs.
+  // 'failIfMajorPerformanceCaveat:false' lets us run on software rasterizers as a last resort.
+  renderer = new THREE.WebGLRenderer({
+    antialias: Q.postFX,
+    powerPreference: 'high-performance',
+    precision: 'mediump',
+    failIfMajorPerformanceCaveat: false,
+  });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, Q.pixelRatio));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
