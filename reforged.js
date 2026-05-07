@@ -19,22 +19,39 @@ const BRIDGES = [
 ];
 
 // ── Roles & stats ───────────────────────────────────────────────────────
+// Pass-A balance pass — DPS-per-cost normalized, outliers tamed.
+// Notes per change:
+//  swarm:    HP 80→70 each (3 of them, total 210 was too tanky for 2 cost)
+//  scout:    DMG 20→18 (still scrappy, slightly less of a killer)
+//  rifleman: dmg 36→32 (kept versatile but not a primary DPS pick)
+//  sniper:   DMG 340→230, atkSpeed 2.0→2.4 (was one-shotting most things)
+//  heavygunner: range 11→9, HP 520→460 (less of a do-everything brick)
+//  flamer:   range 5→6 (slightly more useful), dmg 28→32
+//  grenadier: dmg 130→100 (splash still potent)
+//  lightV:   speed 5.6→5.0, dmg 30→26 (raider not duelist)
+//  apc:      hp 780→700, dmg 38→34 (still tanky, less DPS)
+//  tank:     dmg 200→160, splash 1.5→1.3, hp 1200→1050 (was god unit)
+//  artillery: range 27→22, dmg 230→180, atkSpeed 2.8→3.4 (less safe-spam)
+//  aa:       no nerf — already niche
+//  medic:    no nerf
+//  gunship:  hp 420→380 (still strong, slightly more punishable)
+//  commander: dmg 120→95, hp 950→820 (cost-8 elite, not invincible)
 const ROLE_STATS = {
-  swarm:      { cost:2, hp:80,  dmg:14,  atkSpeed:0.7, range:7,  speed:3.2, radius:0.36, type:'ground', targets:'ground',     count:3, fire:'burst2',   armor:'light' },
-  scout:      { cost:2, hp:150, dmg:20,  atkSpeed:0.4, range:7,  speed:4.6, radius:0.35, type:'ground', targets:'ground_air', count:1, fire:'shot',     armor:'light' },
-  rifleman:   { cost:3, hp:240, dmg:36,  atkSpeed:0.5, range:9,  speed:3.3, radius:0.4,  type:'ground', targets:'ground_air', count:1, fire:'shot',     armor:'light' },
-  sniper:     { cost:4, hp:175, dmg:340, atkSpeed:2.0, range:25, speed:2.3, radius:0.38, type:'ground', targets:'ground_air', count:1, fire:'snipe',    armor:'light' },
-  heavygunner:{ cost:5, hp:520, dmg:26,  atkSpeed:0.13,range:11, speed:1.6, radius:0.5,  type:'ground', targets:'ground_air', count:1, fire:'minigun',  armor:'medium' },
-  flamer:     { cost:4, hp:380, dmg:28,  atkSpeed:0.1, range:5,  speed:2.0, radius:0.45, type:'ground', targets:'ground',     count:1, fire:'flame',    armor:'medium' },
-  grenadier:  { cost:4, hp:210, dmg:130, atkSpeed:1.3, range:12, speed:2.3, radius:0.4,  type:'ground', targets:'ground',     count:1, fire:'grenade', splash:2.5, armor:'light' },
-  lightV:     { cost:3, hp:340, dmg:30,  atkSpeed:0.32,range:8,  speed:5.6, radius:0.55, type:'ground', targets:'ground_air', count:1, fire:'mgShot',   armor:'medium' },
-  apc:        { cost:5, hp:780, dmg:38,  atkSpeed:0.25,range:9,  speed:3.0, radius:0.65, type:'ground', targets:'ground_air', count:1, fire:'mgBurst',  armor:'heavy' },
-  tank:       { cost:6, hp:1200,dmg:200, atkSpeed:1.4, range:14, speed:1.8, radius:0.78, type:'ground', targets:'ground',     count:1, fire:'cannon', splash:1.5,   armor:'heavy' },
-  artillery:  { cost:7, hp:260, dmg:230, atkSpeed:2.8, range:27, speed:1.0, radius:0.62, type:'ground', targets:'ground',     count:1, fire:'arc',     splash:3.5,   armor:'light' },
+  swarm:      { cost:2, hp:70,  dmg:14,  atkSpeed:0.7, range:7,  speed:3.2, radius:0.36, type:'ground', targets:'ground',     count:3, fire:'burst2',   armor:'light' },
+  scout:      { cost:2, hp:150, dmg:18,  atkSpeed:0.4, range:7,  speed:4.6, radius:0.35, type:'ground', targets:'ground_air', count:1, fire:'shot',     armor:'light' },
+  rifleman:   { cost:3, hp:240, dmg:32,  atkSpeed:0.5, range:9,  speed:3.3, radius:0.4,  type:'ground', targets:'ground_air', count:1, fire:'shot',     armor:'light' },
+  sniper:     { cost:4, hp:175, dmg:230, atkSpeed:2.4, range:25, speed:2.3, radius:0.38, type:'ground', targets:'ground_air', count:1, fire:'snipe',    armor:'light' },
+  heavygunner:{ cost:5, hp:460, dmg:26,  atkSpeed:0.13,range:9,  speed:1.6, radius:0.5,  type:'ground', targets:'ground_air', count:1, fire:'minigun',  armor:'medium' },
+  flamer:     { cost:4, hp:380, dmg:32,  atkSpeed:0.1, range:6,  speed:2.0, radius:0.45, type:'ground', targets:'ground',     count:1, fire:'flame',    armor:'medium' },
+  grenadier:  { cost:4, hp:210, dmg:100, atkSpeed:1.3, range:12, speed:2.3, radius:0.4,  type:'ground', targets:'ground',     count:1, fire:'grenade', splash:2.5, armor:'light' },
+  lightV:     { cost:3, hp:340, dmg:26,  atkSpeed:0.32,range:8,  speed:5.0, radius:0.55, type:'ground', targets:'ground_air', count:1, fire:'mgShot',   armor:'medium' },
+  apc:        { cost:5, hp:700, dmg:34,  atkSpeed:0.25,range:9,  speed:3.0, radius:0.65, type:'ground', targets:'ground_air', count:1, fire:'mgBurst',  armor:'heavy' },
+  tank:       { cost:6, hp:1050,dmg:160, atkSpeed:1.4, range:14, speed:1.8, radius:0.78, type:'ground', targets:'ground',     count:1, fire:'cannon', splash:1.3,   armor:'heavy' },
+  artillery:  { cost:7, hp:260, dmg:180, atkSpeed:3.4, range:22, speed:1.0, radius:0.62, type:'ground', targets:'ground',     count:1, fire:'arc',     splash:3.2,   armor:'light' },
   aa:         { cost:4, hp:310, dmg:75,  atkSpeed:0.4, range:18, speed:0,   radius:0.55, type:'ground', targets:'air',        count:1, fire:'flak',     armor:'medium' },
   medic:      { cost:3, hp:240, dmg:0,   atkSpeed:0.7, range:9,  speed:2.7, radius:0.4,  type:'ground', targets:'none',       count:1, fire:'heal', heal:42,        armor:'light' },
-  gunship:    { cost:6, hp:420, dmg:36,  atkSpeed:0.16,range:12, speed:4.0, radius:0.55, type:'air',    targets:'ground_air', count:1, fire:'chain',    armor:'air' },
-  commander:  { cost:8, hp:950, dmg:120, atkSpeed:0.4, range:10, speed:3.0, radius:0.55, type:'ground', targets:'ground_air', count:1, fire:'burst3',   armor:'medium', aura:true },
+  gunship:    { cost:6, hp:380, dmg:36,  atkSpeed:0.16,range:12, speed:4.0, radius:0.55, type:'air',    targets:'ground_air', count:1, fire:'chain',    armor:'air' },
+  commander:  { cost:8, hp:820, dmg:95,  atkSpeed:0.4, range:10, speed:3.0, radius:0.55, type:'ground', targets:'ground_air', count:1, fire:'burst3',   armor:'medium', aura:true },
 };
 
 // Damage matrix — attacker role × target role multiplier (default 1)
@@ -74,7 +91,39 @@ const TIME_OF_DAY = {
   night: { name:'NIGHT', sunY:50, sunHex:0x6080d0, sunInt:0.4, ambHex:0x405080, ambInt:0.45, fogHex:0x101830, fogNear:35, fogFar:140, skyTop:0x040818, skyBot:0x102040 },
 };
 
-// ── Factions ────────────────────────────────────────────────────────────
+// ── FACTION MODS — Pass-A: factions actually play different ────────────
+// Stat multipliers applied at spawn time. Scoped — each faction has identity.
+const FACTION_MODS = {
+  // Rebels: mobile harassers — fast, slightly fragile
+  rebels: { hpMul:0.95, dmgMul:1.00, speedMul:1.15, rangeMul:1.00, costAdj:0,  energyMul:1.00, label:'Mobile / fast strikes' },
+  // Empire: durable line — slow, tanky
+  empire: { hpMul:1.18, dmgMul:1.00, speedMul:0.92, rangeMul:1.00, costAdj:0,  energyMul:1.00, label:'Durable / heavy line' },
+  // Mercs: economy-driven — cheaper units, faster energy
+  mercs:  { hpMul:1.00, dmgMul:1.05, speedMul:1.00, rangeMul:1.00, costAdj:-1, energyMul:1.10, label:'Economic / cheaper units' },
+  // Cult: caster reach — long range, fragile, abilities cost less
+  cult:   { hpMul:0.92, dmgMul:1.00, speedMul:1.00, rangeMul:1.15, costAdj:0,  energyMul:1.00, label:'Long range / fragile' },
+};
+// Faction-vs-faction soft rock-paper-scissors. Multiplier applied to outgoing damage.
+// Matrix is intentionally subtle (5-10%) so unit-level matchups still dominate.
+const FACTION_VS = {
+  rebels: { mercs:1.10,  empire:0.95 },
+  empire: { rebels:1.10, cult:0.95   },
+  mercs:  { cult:1.10,   rebels:0.95 },
+  cult:   { empire:1.10, mercs:0.95  },
+};
+function getFactionMod(fk){ return FACTION_MODS[fk] || { hpMul:1, dmgMul:1, speedMul:1, rangeMul:1, costAdj:0, energyMul:1 }; }
+function getFactionVs(att, def){
+  if (!att || !def) return 1;
+  const r = FACTION_VS[att]; if (!r) return 1;
+  const v = r[def]; return v == null ? 1 : v;
+}
+// Adjusted unit cost = role base cost + faction adj (clamped 1..10)
+function unitCost(unitKey){
+  const def = UNITS[unitKey]; if (!def) return 0;
+  const fm = getFactionMod(def.faction);
+  return Math.max(1, Math.min(10, def.cost + (fm.costAdj || 0)));
+}
+
 const FACTIONS = {
   rebels: { name:'REBELS', tagline:'Scrappy insurgents. Improvised gear.', style:'Earthy tones · patched armor',
     palette:{ main:0x8a6a3a, accent:0x3a2815, glow:0xf4a84a, flag:0xd4a054, skin:0xd8b088, metal:0x5a4a30 }, ability:'reinforcements',
@@ -137,9 +186,12 @@ const MISSIONS = [
 ];
 const MISSION_REWARDS = {1:[],2:['airstrike'],3:['heal'],4:[],5:['emp'],6:[]};
 const TOWER_TYPES = {
-  gun:    { name:'Heavy Gun',   icon:'🗼',hp:1500,dmg:50,range:14,atkSpeed:0.8,targets:'ground_air',desc:'Balanced',stats:'HP1500 DMG50 R14' },
-  mortar: { name:'Siege Mortar',icon:'💣',hp:1200,dmg:115,range:21,atkSpeed:2.0,targets:'ground',splash:3.0,desc:'Splash',stats:'HP1200 DMG115 SPLASH' },
-  aa:     { name:'Flak Tower',  icon:'✈️',hp:1300,dmg:70,range:19,atkSpeed:0.55,targets:'air',desc:'Anti-air',stats:'HP1300 DMG70 AA' },
+  // Pass-A nerf: turrets are obstacles, not unkillable cannons.
+  // Old: HP1500 DMG50 / HP1200 DMG115 / HP1300 DMG70
+  // New: lower HP + DMG so a focused push (~3-4 mid units) can break a turret.
+  gun:    { name:'Heavy Gun',   icon:'🗼',hp:1100,dmg:35, range:14,atkSpeed:1.0, targets:'ground_air',desc:'Balanced',     stats:'HP1100 DMG35 R14',  windup:0.4 },
+  mortar: { name:'Siege Mortar',icon:'💣',hp:900, dmg:80, range:20,atkSpeed:2.4, targets:'ground',splash:2.6,desc:'Splash',  stats:'HP900 DMG80 SPLASH', windup:0.6 },
+  aa:     { name:'Flak Tower',  icon:'✈️',hp:1000,dmg:50, range:18,atkSpeed:0.65,targets:'air',   desc:'Anti-air',           stats:'HP1000 DMG50 AA',    windup:0.4 },
 };
 const DIFFICULTY = {
   easy:   { name:'EASY',   aiSpeedMul:0.6, aiSmartMul:0.55, enemyHpMul:0.75, enemyStartEnergy:3, playerStartEnergyBonus:2 },
@@ -2138,11 +2190,16 @@ function spawnUnit(unitKey, side, fx, fz){
     const ox = (i % 2) * 0.45 - 0.18;
     const oz = (i - (count - 1) / 2) * 0.55;
     const diff = DIFFICULTY[STATE.difficulty || 'normal'] || DIFFICULTY.normal;
-    const hpMul = (side === 'enemy' && STATE.currentMission) ? STATE.currentMission.enemyHpMul * diff.enemyHpMul : 1;
+    const fm = getFactionMod(def.faction);
+    const hpMul = ((side === 'enemy' && STATE.currentMission) ? STATE.currentMission.enemyHpMul * diff.enemyHpMul : 1) * fm.hpMul;
     const u = {
       id:nextId++, key:unitKey, def, side, x:fx + ox, z:fz + oz,
       facing: side === 'player' ? Math.PI/2 : -Math.PI/2,
       hp:def.hp * hpMul, maxHp:def.hp * hpMul,
+      // Cached effective stats — read by movement/fire instead of def.* directly
+      effSpeed: def.speed * fm.speedMul,
+      effRange: def.range * fm.rangeMul,
+      effDmgMul: fm.dmgMul,
       cooldown:0, target:null, spawnAnim:1.0,
       walkPhase:Math.random() * Math.PI * 2,
       flash:0, stunned:0, smoked:0, recoil:0, moving:false,
@@ -2180,14 +2237,20 @@ function createTowers(){
     const T = TOWER_TYPES[type];
     return { side, faction:fk, role:'turret', type, x, z, hp:T.hp * hpMul, maxHp:T.hp * hpMul,
       dmg:T.dmg, range:T.range, atkSpeed:T.atkSpeed, radius:1.4, targets:T.targets, splash:T.splash || 0,
+      // windupTimer: rolls down from windup whenever a fresh target enters range.
+      // Tower can't fire until it hits 0. Units can deploy under cover briefly.
+      windup:T.windup || 0.4, windupTimer:0, lastTargetId:null,
       label, flash:0, stunned:0, cooldown:0 };
   }
+  // Pass-A: HQ no longer attacks. Higher HP (was 5000 → 6500) since it's a
+  // target-only structure now. Range/dmg/atkSpeed kept for old-data compat
+  // but `targets:'none'` makes findNearestEnemyForTower skip it.
   const list = [
-    { side:'player', faction:pf, role:'hq', type:'hq', x:pHQX, z:0, hp:5000, maxHp:5000, dmg:38, range:13, atkSpeed:1.0, radius:3, targets:'ground_air', flash:0, stunned:0, cooldown:0 },
+    { side:'player', faction:pf, role:'hq', type:'hq', x:pHQX, z:0, hp:6500, maxHp:6500, dmg:0, range:0, atkSpeed:99, radius:3, targets:'none', flash:0, stunned:0, cooldown:0 },
     mk('player', pf, topT, pTX, LANE_TOP_Z, 'T', 1),
     mk('player', pf, midT, pTX, LANE_MID_Z, 'M', 1),
     mk('player', pf, botT, pTX, LANE_BOT_Z, 'B', 1),
-    { side:'enemy', faction:ef, role:'hq', type:'hq', x:eHQX, z:0, hp:5000*ehp, maxHp:5000*ehp, dmg:38, range:13, atkSpeed:1.0, radius:3, targets:'ground_air', flash:0, stunned:0, cooldown:0 },
+    { side:'enemy', faction:ef, role:'hq', type:'hq', x:eHQX, z:0, hp:6500*ehp, maxHp:6500*ehp, dmg:0, range:0, atkSpeed:99, radius:3, targets:'none', flash:0, stunned:0, cooldown:0 },
     mk('enemy', ef, topT, eTX, LANE_TOP_Z, 'T', ehp),
     mk('enemy', ef, midT, eTX, LANE_MID_Z, 'M', ehp),
     mk('enemy', ef, botT, eTX, LANE_BOT_Z, 'B', ehp),
@@ -2248,7 +2311,8 @@ function nearestBridge(z){
 function moveToward(u, target, dt){
   if (u.def.speed === 0 || u.stunned > 0) { u.moving = false; return; }
   const def = u.def;
-  let speed = def.speed;
+  // Use cached effSpeed (faction speed mod baked in at spawn)
+  let speed = u.effSpeed != null ? u.effSpeed : def.speed;
   if (u.buffed > 0) speed *= 1.2;
   if (u.warCry > 0) speed *= 1.3;
   if (def.type === 'air') {
@@ -2339,6 +2403,8 @@ function findTarget(u){
   return best;
 }
 function findNearestEnemyForTower(t){
+  // Pass-A: HQ has targets:'none' — skip it entirely
+  if (!t.targets || t.targets === 'none') return null;
   let best = null, bs = -Infinity;
   const canG = t.targets === 'ground' || t.targets === 'ground_air';
   const canA = t.targets === 'air' || t.targets === 'ground_air';
@@ -2357,7 +2423,11 @@ function findNearestEnemyForTower(t){
 
 function applyDamage(t, dmg, attacker){
   if (!t || t.hp == null) return;
-  if (attacker && attacker.def && t.def) dmg *= getDmgMul(attacker.def.roleKey, t.def.roleKey);
+  if (attacker && attacker.def && t.def) {
+    // Role-vs-role multiplier (existing) + faction-vs-faction (Pass A)
+    dmg *= getDmgMul(attacker.def.roleKey, t.def.roleKey);
+    dmg *= getFactionVs(attacker.def.faction, t.def.faction);
+  }
   if (t.aegis && t.aegis > 0) dmg *= 0.5;
   if (t.side === 'player') STATE.stats.dmgTaken += dmg;
   if (attacker && attacker.side === 'player') STATE.stats.dmgDealt += dmg;
@@ -2396,7 +2466,7 @@ function flashDamageOverlay(){
   setTimeout(() => { f.style.transition = ''; }, 600);
 }
 function effDmg(u){
-  let m = 1;
+  let m = u.effDmgMul || 1;   // faction dmg mod baked in
   if (u.buffed > 0) m *= 1.15;
   if (u.ritualBuff > 0) m *= 1.25;
   if (u.warCry > 0) m *= 1.3;
@@ -2740,7 +2810,7 @@ function updateAI(dt){
 }
 function aiTakeTurn(ctx){
   if (ctx.energy < 2) return;
-  const aff = ctx.hand.filter(k => { const u = UNITS[k]; if (!u || u.cost > ctx.energy) return false; if (ctx.cooldowns && ctx.cooldowns[k] > 0) return false; return true; });
+  const aff = ctx.hand.filter(k => { const u = UNITS[k]; if (!u || unitCost(k) > ctx.energy) return false; if (ctx.cooldowns && ctx.cooldowns[k] > 0) return false; return true; });
   if (!aff.length) return;
   let choice = aff[Math.floor(Math.random() * aff.length)];
   if (Math.random() < ctx.smart) choice = pickCounter(aff, ctx) || choice;
@@ -2763,7 +2833,7 @@ function aiTakeTurn(ctx){
       else fx = Math.max(-FIELD_W/2 + 2, Math.min(-RIVER_HALF - 2, threat.x + 6 + Math.random() * 3));
     }
   }
-  ctx.onSpend(UNITS[choice].cost, choice);
+  ctx.onSpend(unitCost(choice), choice);
   spawnUnit(choice, ctx.side, fx, fz);
 }
 function pickCounter(aff, ctx){
@@ -3214,8 +3284,11 @@ function update(dt) {
   else if (elapsed >= 150) mul = 3;
   else if (elapsed >= 120) mul = 2;
   STATE.energyMul = mul;
-  STATE.energy = Math.min(STATE.maxEnergy, STATE.energy + STATE.energyRate * mul * dt);
-  STATE.enemyEnergy = Math.min(STATE.maxEnergy, STATE.enemyEnergy + STATE.energyRate * mul * dt);
+  // Faction energy multipliers (Pass A) — Mercs regen +10%
+  const pFM = getFactionMod(STATE.progress.playerFaction);
+  const eFM = STATE.currentMission ? getFactionMod(STATE.currentMission.enemyFaction) : { energyMul:1 };
+  STATE.energy = Math.min(STATE.maxEnergy, STATE.energy + STATE.energyRate * mul * dt * pFM.energyMul);
+  STATE.enemyEnergy = Math.min(STATE.maxEnergy, STATE.enemyEnergy + STATE.energyRate * mul * dt * eFM.energyMul);
   STATE.timer -= dt;
   // Cooldowns
   if (STATE.cardCooldowns) {
@@ -3273,7 +3346,8 @@ function update(dt) {
         if (d < wd) { wd = d; wounded = a; }
       }
       if (wounded) {
-        if (wd > u.def.range - 0.5) moveToward(u, wounded, dt);
+        const eR = u.effRange || u.def.range;
+        if (wd > eR - 0.5) moveToward(u, wounded, dt);
         else if (u.cooldown <= 0) {
           wounded.hp = Math.min(wounded.maxHp, wounded.hp + u.def.heal);
           addFX({ type:'heal_beam', x:u.x, z:u.z, tx:wounded.x, tz:wounded.z, t:0, dur:0.45 });
@@ -3286,11 +3360,12 @@ function update(dt) {
       }
       continue;
     }
-    if (!u.target || u.target.hp <= 0 || dist(u, u.target) > u.def.range + 5) u.target = findTarget(u);
+    const eRange = u.effRange || u.def.range;
+    if (!u.target || u.target.hp <= 0 || dist(u, u.target) > eRange + 5) u.target = findTarget(u);
     if (u.cooldown > 0) u.cooldown -= dt;
     if (u.target) {
       const d = dist(u, u.target);
-      if (d <= u.def.range) {
+      if (d <= eRange) {
         u.moving = false;
         if (u.cooldown <= 0 && u.burstRemaining <= 0) {
           fireWeapon(u, u.target);
@@ -3307,8 +3382,21 @@ function update(dt) {
     if (t.hp <= 0) continue;
     if (t.stunned > 0) { t.stunned -= dt; continue; }
     if (t.cooldown > 0) t.cooldown -= dt;
+    if (t.windupTimer > 0) t.windupTimer -= dt;
     const tg = findNearestEnemyForTower(t);
-    if (tg && dist(t, tg) <= t.range && t.cooldown <= 0) fireTowerWeapon(t, tg);
+    if (!tg) {
+      // Lost target → reset windup so the next target gets a fresh delay
+      t.lastTargetId = null;
+      continue;
+    }
+    // Fresh target appeared → trigger wind-up
+    if (t.lastTargetId !== tg.id) {
+      t.lastTargetId = tg.id;
+      t.windupTimer = t.windup || 0;
+    }
+    if (dist(t, tg) <= t.range && t.cooldown <= 0 && t.windupTimer <= 0) {
+      fireTowerWeapon(t, tg);
+    }
   }
   // Projectiles
   for (const p of STATE.projectiles) {
@@ -3621,13 +3709,15 @@ function attemptDeploy(key, x, z) {
     return;
   }
   const def = UNITS[key]; if (!def) return;
-  if (STATE.energy < def.cost) { showToast('NOT ENOUGH ENERGY'); playSound('ui_click'); return; }
+  // Faction-adjusted cost (Mercs -1, others 0)
+  const cost = unitCost(key);
+  if (STATE.energy < cost) { showToast('NOT ENOUGH ENERGY'); playSound('ui_click'); return; }
   const zMaxX = -RIVER_HALF - 1.2, zMinX = -FIELD_W/2 + 3.5;
   const zMaxZ = FIELD_D/2 - 1.5, zMinZ = -FIELD_D/2 + 1.5;
   if (x > zMaxX + 4 || x < zMinX - 4 || Math.abs(z) > zMaxZ + 4) { showToast('DEPLOY IN YOUR ZONE'); playSound('ui_click'); return; }
   x = Math.max(zMinX, Math.min(zMaxX, x));
   z = Math.max(zMinZ, Math.min(zMaxZ, z));
-  STATE.energy -= def.cost;
+  STATE.energy -= cost;
   spawnUnit(key, 'player', x, z);
   cycleHandSlot(key);
   STATE.selectedCard = null;
@@ -3743,7 +3833,7 @@ function updateHUD() {
   const deck = (STATE.progress.decks[fk] || []).slice(0, 10);
   document.querySelectorAll('.hand-card').forEach((el, i) => {
     const k = deck[i]; if (!k) return;
-    const cost = (UNITS[k] && UNITS[k].cost) || (POWERS[k] && POWERS[k].cost) || 0;
+    const cost = UNITS[k] ? unitCost(k) : ((POWERS[k] && POWERS[k].cost) || 0);
     el.classList.toggle('affordable', STATE.energy >= cost);
     el.classList.toggle('unaffordable', STATE.energy < cost);
   });
@@ -3805,10 +3895,13 @@ function renderHand() {
     const card = document.createElement('div');
     card.className = 'hand-card' + (isPower ? ' power' : '') + (STATE.selectedCard === k ? ' selected' : '') + (onCD ? ' cooldown' : '');
     const cdo = onCD ? `<div class="cd-overlay">${cd[k].toFixed(1)}s</div>` : '';
-    card.innerHTML = `<div class="cost-badge">${def.cost}</div><div class="icon-box">${cardIconSVG(k)}</div><div class="name">${def.name}</div>${cdo}`;
+    // Show faction-adjusted cost on hand cards
+    const showCost = UNITS[k] ? unitCost(k) : def.cost;
+    card.innerHTML = `<div class="cost-badge">${showCost}</div><div class="icon-box">${cardIconSVG(k)}</div><div class="name">${def.name}</div>${cdo}`;
     card.onclick = () => {
       if (onCD) { showToast('COOLDOWN'); playSound('ui_click'); return; }
-      if (STATE.energy < def.cost) { showToast('NOT ENOUGH ENERGY'); playSound('ui_click'); return; }
+      const _c = UNITS[k] ? unitCost(k) : def.cost;
+      if (STATE.energy < _c) { showToast('NOT ENOUGH ENERGY'); playSound('ui_click'); return; }
       STATE.selectedCard = STATE.selectedCard === k ? null : k;
       playSound('ui_select'); renderHand();
     };
@@ -4149,19 +4242,26 @@ function quickSkirmish() {
 function showHowTo() {
   alert(
     'TIN SOLDIERS REFORGED v9 — HOW TO PLAY\n\n' +
-    '• Each faction has 15 unique units. Counter relationships matter.\n' +
-    '• 3 LANES walled by forest. Chop trees to flank.\n\n' +
+    'OBJECTIVE: Destroy the enemy HQ. HQ is target-only — it does not\n' +
+    'shoot back, but it has 6500 HP. You must break a forward turret\n' +
+    'first to open a lane to it.\n\n' +
+    'FACTIONS — each plays differently:\n' +
+    '• REBELS  +15% speed (mobile harassers, slightly fragile)\n' +
+    '• EMPIRE  +18% HP (durable line, slower)\n' +
+    '• MERCS   -1 cost / +5% dmg / +10% energy (snowball economy)\n' +
+    '• CULT    +15% range (long-reach casters, slightly fragile)\n' +
+    'Faction-vs-faction: Rebels > Mercs > Cult > Empire > Rebels (10%).\n\n' +
     'CAMERA:\n' +
     '• Drag = orbit (free 360°). WASD = pan target.\n' +
     '• Scroll/pinch = zoom. Q/E = up/down.\n' +
-    '• Arrow keys = rotate. C = cycle preset.\n' +
-    '• O = toggle pan/orbit. R = reset.\n\n' +
+    '• C = cycle preset. R = reset. O = toggle pan/orbit.\n\n' +
     'COMBAT:\n' +
     '• Tap a card, then tap your half of the field to deploy.\n' +
+    '• Tap a deployed unit to trigger its ABILITY (cooldown shown).\n' +
+    '• Towers have a 0.4s wind-up on first shot — use it to push.\n' +
     '• AA destroys Air (2.5x) but useless vs ground (0x).\n' +
-    '• Snipers: 2x vs Medic, 1.8x vs Commander, 2.2x vs Gunship.\n' +
-    '• Tanks: 1.5x vs APC, 0x vs Air. Use Artillery vs Tanks.\n\n' +
-    'Destroy the enemy HQ to win. 3:00 + overtime.'
+    '• Snipers shred Medic / Commander / Gunship. Artillery shreds Tanks.\n\n' +
+    'TIME LIMIT: 3:00 then sudden death (x5 energy).'
   );
 }
 
@@ -4170,10 +4270,27 @@ function renderFactionList() {
   const list = document.getElementById('factionList'); list.innerHTML = '';
   for (const fk of Object.keys(FACTIONS)) {
     const f = FACTIONS[fk];
+    const fm = getFactionMod(fk);
+    // Build a compact stat-line: shows what the faction actually changes
+    const bits = [];
+    if (fm.hpMul !== 1)     bits.push((fm.hpMul > 1 ? '+' : '') + Math.round((fm.hpMul - 1) * 100) + '% HP');
+    if (fm.dmgMul !== 1)    bits.push((fm.dmgMul > 1 ? '+' : '') + Math.round((fm.dmgMul - 1) * 100) + '% DMG');
+    if (fm.speedMul !== 1)  bits.push((fm.speedMul > 1 ? '+' : '') + Math.round((fm.speedMul - 1) * 100) + '% SPD');
+    if (fm.rangeMul !== 1)  bits.push((fm.rangeMul > 1 ? '+' : '') + Math.round((fm.rangeMul - 1) * 100) + '% RNG');
+    if (fm.costAdj)         bits.push((fm.costAdj < 0 ? '' : '+') + fm.costAdj + ' COST');
+    if (fm.energyMul !== 1) bits.push((fm.energyMul > 1 ? '+' : '') + Math.round((fm.energyMul - 1) * 100) + '% ENERGY');
+    const statLine = bits.length ? '<div class="faction-style" style="color:#80c0ff;margin-top:4px">' + bits.join('  ·  ') + '</div>' : '';
     const card = document.createElement('div');
     const sel = STATE.progress.playerFaction === fk;
     card.className = 'faction-card ' + fk + (sel ? ' selected' : '');
-    card.innerHTML = `<div class="faction-icon">${factionEmblemSVG(fk, 64)}</div><div class="faction-info"><div class="faction-name">${f.name}</div><div class="faction-tagline">${f.tagline}</div><div class="faction-style">${f.style}</div></div>`;
+    card.innerHTML = `<div class="faction-icon">${factionEmblemSVG(fk, 64)}</div>
+      <div class="faction-info">
+        <div class="faction-name">${f.name}</div>
+        <div class="faction-tagline">${f.tagline}</div>
+        <div class="faction-style">${f.style}</div>
+        ${statLine}
+        <div class="faction-style" style="color:#80a0c8;margin-top:2px;font-size:9px">${fm.label || ''}</div>
+      </div>`;
     card.onclick = () => selectFaction(fk);
     list.appendChild(card);
   }
