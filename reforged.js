@@ -214,43 +214,289 @@ function normalizeDeck(){
 
 // ── AUDIO (same engine as v8) ───────────────────────────────────────────
 let audioCtx = null;
-function ensureAudio(){ if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)(); return audioCtx; }
+// Master bus + reverb send. Reverb is a synthetic IR (decaying noise).
+let _audioBus = null, _audioRev = null;
+function ensureAudio(){
+  if (!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  if (!_audioBus) {
+    _audioBus = audioCtx.createGain();
+    _audioBus.gain.value = 0.85;
+    _audioBus.connect(audioCtx.destination);
+    // Reverb send
+    try {
+      const conv = audioCtx.createConvolver();
+      const sr = audioCtx.sampleRate, dur = 1.4;
+      const buf = audioCtx.createBuffer(2, sr * dur, sr);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = buf.getChannelData(ch);
+        for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2.5);
+      }
+      conv.buffer = buf;
+      const wet = audioCtx.createGain(); wet.gain.value = 0.15;
+      conv.connect(wet); wet.connect(_audioBus);
+      _audioRev = audioCtx.createGain(); _audioRev.gain.value = 1.0;
+      _audioRev.connect(conv);
+    } catch(e) { _audioRev = _audioBus; }
+  }
+  return audioCtx;
+}
+function _outNode(sendRev){
+  ensureAudio();
+  if (sendRev && _audioRev) {
+    const splitter = audioCtx.createGain();
+    splitter.connect(_audioBus);
+    splitter.connect(_audioRev);
+    return splitter;
+  }
+  return _audioBus;
+}
 function noiseBuf(d,a){ const sr=a.sampleRate, l=Math.floor(sr*d), b=a.createBuffer(1,l,sr), c=b.getChannelData(0); for(let i=0;i<l;i++) c[i]=Math.random()*2-1; return b; }
-function tone(f1,f2,d,t,v){ try{ const a=ensureAudio(),n=a.currentTime,o=a.createOscillator(),g=a.createGain(); o.type=t||'square'; o.frequency.setValueAtTime(f1,n); o.frequency.exponentialRampToValueAtTime(Math.max(40,f2),n+d); g.gain.setValueAtTime(v,n); g.gain.exponentialRampToValueAtTime(.0001,n+d); o.connect(g); g.connect(a.destination); o.start(n); o.stop(n+d+.02); }catch(e){} }
-function noise(d,f,q,v,a){ try{ const ac=ensureAudio(),s=ac.createBufferSource(); s.buffer=noiseBuf(d,ac); const fi=ac.createBiquadFilter(); fi.type='bandpass'; fi.frequency.value=f; fi.Q.value=q||1; const g=ac.createGain(),n=ac.currentTime; g.gain.setValueAtTime(0,n); g.gain.linearRampToValueAtTime(v,n+(a||.005)); g.gain.exponentialRampToValueAtTime(.0001,n+d); s.connect(fi); fi.connect(g); g.connect(ac.destination); s.start(n); s.stop(n+d); }catch(e){} }
-function sub(d,f,v){ try{ const a=ensureAudio(),n=a.currentTime,o=a.createOscillator(),g=a.createGain(); o.type='sine'; o.frequency.setValueAtTime(f,n); o.frequency.exponentialRampToValueAtTime(Math.max(20,f*.3),n+d); g.gain.setValueAtTime(v,n); g.gain.exponentialRampToValueAtTime(.0001,n+d); o.connect(g); g.connect(a.destination); o.start(n); o.stop(n+d+.02); }catch(e){} }
+function tone(f1,f2,d,t,v,opts){
+  opts = opts||{};
+  try {
+    const a=ensureAudio(),n=a.currentTime,o=a.createOscillator(),g=a.createGain();
+    o.type=t||'square';
+    o.frequency.setValueAtTime(f1,n);
+    o.frequency.exponentialRampToValueAtTime(Math.max(40,f2),n+d);
+    // Punchier envelope: 2ms attack, exponential decay
+    g.gain.setValueAtTime(0,n);
+    g.gain.linearRampToValueAtTime(v, n + (opts.atk || 0.002));
+    g.gain.exponentialRampToValueAtTime(.0001, n + d);
+    o.connect(g); g.connect(_outNode(opts.rev));
+    o.start(n); o.stop(n+d+.02);
+  } catch(e){}
+}
+function noise(d,f,q,v,a,opts){
+  opts = opts||{};
+  try {
+    const ac=ensureAudio(),s=ac.createBufferSource();
+    s.buffer=noiseBuf(d,ac);
+    const fi=ac.createBiquadFilter();
+    fi.type=opts.filterType||'bandpass';
+    fi.frequency.value=f; fi.Q.value=q||1;
+    const g=ac.createGain(),n=ac.currentTime;
+    g.gain.setValueAtTime(0,n);
+    g.gain.linearRampToValueAtTime(v,n+(a||.005));
+    g.gain.exponentialRampToValueAtTime(.0001,n+d);
+    s.connect(fi); fi.connect(g); g.connect(_outNode(opts.rev));
+    s.start(n); s.stop(n+d);
+  } catch(e){}
+}
+function sub(d,f,v,opts){
+  opts = opts||{};
+  try {
+    const a=ensureAudio(),n=a.currentTime,o=a.createOscillator(),g=a.createGain();
+    o.type='sine';
+    o.frequency.setValueAtTime(f,n);
+    o.frequency.exponentialRampToValueAtTime(Math.max(20,f*.3),n+d);
+    g.gain.setValueAtTime(0,n);
+    g.gain.linearRampToValueAtTime(v, n + 0.002);
+    g.gain.exponentialRampToValueAtTime(.0001,n+d);
+    o.connect(g); g.connect(_outNode(opts.rev));
+    o.start(n); o.stop(n+d+.02);
+  } catch(e){}
+}
+// Pitched click — sharp transient for shot/impact "snap"
+function click(freq, vol){
+  try {
+    const a=ensureAudio(),n=a.currentTime,o=a.createOscillator(),g=a.createGain();
+    o.type='triangle';
+    o.frequency.setValueAtTime(freq*4,n);
+    o.frequency.exponentialRampToValueAtTime(freq,n+0.012);
+    g.gain.setValueAtTime(vol,n);
+    g.gain.exponentialRampToValueAtTime(.0001, n + 0.022);
+    o.connect(g); g.connect(_audioBus);
+    o.start(n); o.stop(n+0.04);
+  } catch(e){}
+}
 function playSound(k){ try{ const a=ensureAudio(); if(a.state==='suspended') a.resume();
-  if(k==='shot'){ tone(1800,300,.04,'square',.03); noise(.05,4000,6,.04); sub(.08,120,.04); }
-  else if(k==='burst2'){ for(let i=0;i<2;i++) setTimeout(()=>playSound('shot'),i*55); }
-  else if(k==='burst3'){ for(let i=0;i<3;i++) setTimeout(()=>playSound('shot'),i*50); }
-  else if(k==='snipe'){ tone(2800,400,.15,'square',.08); noise(.5,1500,2,.07); sub(.25,180,.08); }
-  else if(k==='minigun'){ for(let i=0;i<7;i++) setTimeout(()=>{ tone(950+Math.random()*350,500,.022,'square',.028); noise(.03,3500,5,.025); },i*28); }
-  else if(k==='chain'){ for(let i=0;i<5;i++) setTimeout(()=>{ tone(1300+Math.random()*250,900,.02,'square',.025); noise(.03,2800,4,.022); },i*22); }
-  else if(k==='cannon'){ sub(.6,80,.18); tone(80,35,.6,'sawtooth',.14); noise(.5,180,1.5,.13); setTimeout(()=>noise(.3,120,1,.07),40); }
-  else if(k==='rocket'){ tone(220,80,.35,'sawtooth',.09); noise(.45,700,2,.09); sub(.35,100,.07); }
-  else if(k==='mortar'){ tone(200,60,.25,'triangle',.09); noise(.18,280,3,.06); }
-  else if(k==='flak'){ tone(700,220,.14,'sawtooth',.07); noise(.17,900,2,.05); }
-  else if(k==='flame'){ noise(.35,380,.7,.1,.02); tone(110,75,.3,'sawtooth',.05); }
-  else if(k==='grenade'){ tone(420,220,.16,'triangle',.05); noise(.12,600,2,.03); }
-  else if(k==='boom'){ sub(.4,100,.2); tone(110,32,.55,'sawtooth',.12); noise(.6,350,1.5,.16); setTimeout(()=>noise(.25,180,1,.08),60); }
-  else if(k==='boom_big'){ sub(.9,55,.3); tone(55,18,1,'sawtooth',.2); noise(1.1,180,.8,.22); setTimeout(()=>{ sub(.5,70,.12); noise(.5,120,.8,.12); },80); setTimeout(()=>noise(.6,220,1,.08),200); }
-  else if(k==='deploy'){ tone(320,520,.1,'sine',.045); tone(520,720,.08,'triangle',.035); setTimeout(()=>tone(720,920,.06,'sine',.03),50); }
-  else if(k==='ui_click'){ tone(900,650,.04,'square',.025); }
-  else if(k==='ui_select'){ tone(600,900,.06,'triangle',.035); setTimeout(()=>tone(900,1200,.05,'triangle',.03),30); }
-  else if(k==='win'){ const ns=[440,554,659,880,1108]; ns.forEach((f,i)=>setTimeout(()=>{ tone(f,f,.28,'triangle',.06); tone(f*2,f*2,.28,'sine',.03); },i*110)); }
-  else if(k==='lose'){ const ns=[440,370,277,220,165]; ns.forEach((f,i)=>setTimeout(()=>{ tone(f,f,.35,'sawtooth',.07); tone(f*.5,f*.5,.35,'triangle',.04); },i*180)); }
-  else if(k==='siren'){ const ac=ensureAudio(),n=ac.currentTime,o=ac.createOscillator(),g=ac.createGain(); o.type='sine'; o.frequency.setValueAtTime(500,n); o.frequency.linearRampToValueAtTime(900,n+.25); o.frequency.linearRampToValueAtTime(500,n+.5); o.frequency.linearRampToValueAtTime(900,n+.75); o.frequency.linearRampToValueAtTime(500,n+1); g.gain.setValueAtTime(.06,n); g.gain.exponentialRampToValueAtTime(.001,n+1.05); o.connect(g); g.connect(ac.destination); o.start(n); o.stop(n+1.1); }
-  else if(k==='heal'){ tone(700,1100,.18,'sine',.035); setTimeout(()=>tone(1100,1600,.14,'sine',.025),60); }
-  else if(k==='emp'){ tone(2200,80,.7,'square',.09); tone(1800,60,.5,'sawtooth',.05); noise(.7,1800,4,.04); }
-  else if(k==='lane_lost'){ const ns=[700,550,420,320]; ns.forEach((f,i)=>setTimeout(()=>tone(f*1.3,f,.18,'sawtooth',.07),i*90)); sub(.5,60,.1); }
-  else if(k==='passive_cue'){ tone(800,1400,.15,'triangle',.04); setTimeout(()=>tone(1400,1800,.12,'sine',.03),60); noise(.2,3000,3,.02); }
-  else if(k==='cook_off'){ tone(180,60,.3,'square',.08); noise(.35,500,2,.08); sub(.25,100,.08); }
-  else if(k==='crash'){ sub(.7,50,.22); noise(.9,160,.7,.18); tone(60,25,.8,'sawtooth',.16); setTimeout(()=>noise(.4,300,1.5,.1),100); }
-  else if(k==='ritual'){ tone(440,110,.6,'sawtooth',.06); tone(660,165,.6,'triangle',.04); noise(.6,400,1.5,.03); }
-  else if(k==='paycheck'){ [800,1200,900,1400].forEach((f,i)=>setTimeout(()=>tone(f,f*1.3,.05,'triangle',.03),i*40)); }
-  else if(k==='gore'){ noise(.08,400,3,.08,.005); tone(180,80,.1,'sawtooth',.05); noise(.15,900,1.5,.04); }
-  else if(k==='gore_big'){ noise(.12,300,2,.12,.003); tone(140,60,.2,'sawtooth',.07); noise(.28,700,1.2,.08); sub(.18,90,.06); }
-  else if(k==='tree_fall'){ noise(.7,180,1,.08,.02); tone(80,40,.4,'sawtooth',.05); }
+  // ── SHOTS — 4-layer: transient click, body crack, hi noise tail, sub thump
+  if (k === 'shot') {
+    click(2400, 0.04);                                   // transient snap
+    tone(1500, 280, 0.045, 'square', 0.04);              // body crack
+    noise(0.06, 4500, 5, 0.05, 0.001);                   // hi tail
+    sub(0.10, 110, 0.06);                                // bass thump
+  }
+  else if (k === 'burst2') { for (let i=0;i<2;i++) setTimeout(()=>playSound('shot'), i*55); }
+  else if (k === 'burst3') { for (let i=0;i<3;i++) setTimeout(()=>playSound('shot'), i*50); }
+  // ── SNIPER — beefy crack with long reverb tail
+  else if (k === 'snipe') {
+    click(3200, 0.10);
+    tone(2400, 320, 0.18, 'square', 0.10);
+    tone(1100, 200, 0.22, 'sawtooth', 0.05);
+    noise(0.55, 1300, 1.5, 0.10, 0.001, { rev:true });   // huge echoey tail
+    sub(0.35, 150, 0.12);
+  }
+  // ── MINIGUN — rapid layered with subtle pitch variation
+  else if (k === 'minigun') {
+    for (let i = 0; i < 7; i++) setTimeout(() => {
+      click(1400 + Math.random()*200, 0.025);
+      tone(880 + Math.random()*300, 480, 0.024, 'square', 0.034);
+      noise(0.035, 3500, 4, 0.030);
+    }, i*28);
+  }
+  // ── HELI CHAINGUN
+  else if (k === 'chain') {
+    for (let i = 0; i < 5; i++) setTimeout(() => {
+      click(1700 + Math.random()*200, 0.025);
+      tone(1200 + Math.random()*200, 800, 0.022, 'square', 0.030);
+      noise(0.035, 2900, 3.5, 0.026);
+    }, i*22);
+  }
+  // ── TANK CANNON — massive 5-layer
+  else if (k === 'cannon') {
+    sub(0.85, 70, 0.28);                                 // huge sub
+    tone(70, 28, 0.7, 'sawtooth', 0.20);                 // body
+    noise(0.6, 160, 1.2, 0.20, 0.001, { rev:true });     // wet noise tail
+    click(380, 0.18);                                    // transient
+    setTimeout(() => { noise(0.4, 110, 0.9, 0.10); sub(0.4, 50, 0.12); }, 50);
+  }
+  else if (k === 'rocket') {
+    tone(240, 75, 0.40, 'sawtooth', 0.11);
+    noise(0.55, 700, 1.8, 0.11, 0.005, { rev:true });
+    sub(0.45, 90, 0.10);
+  }
+  else if (k === 'mortar') {
+    tone(220, 55, 0.30, 'triangle', 0.11);
+    noise(0.22, 250, 2.5, 0.08, 0.003);
+    sub(0.20, 80, 0.06);
+  }
+  else if (k === 'flak') {
+    click(1400, 0.06);
+    tone(750, 200, 0.16, 'sawtooth', 0.09);
+    noise(0.20, 900, 1.5, 0.07);
+  }
+  else if (k === 'flame') {
+    noise(0.38, 380, 0.6, 0.13, 0.020);
+    noise(0.32, 1100, 1.0, 0.08, 0.020);
+    tone(105, 70, 0.32, 'sawtooth', 0.06);
+  }
+  else if (k === 'grenade') {
+    click(900, 0.05);
+    tone(440, 200, 0.18, 'triangle', 0.06);
+    noise(0.14, 600, 1.8, 0.04);
+  }
+  // ── EXPLOSIONS — multilayer with delayed body
+  else if (k === 'boom') {
+    click(800, 0.18);
+    sub(0.5, 90, 0.26);
+    tone(105, 30, 0.6, 'sawtooth', 0.14);
+    noise(0.7, 320, 1.2, 0.20, 0.001, { rev:true });
+    setTimeout(() => { noise(0.3, 170, 0.8, 0.10); sub(0.3, 60, 0.10); }, 60);
+  }
+  else if (k === 'boom_big') {
+    click(600, 0.30);
+    sub(1.1, 50, 0.40);                                  // earth-shaking sub
+    tone(50, 16, 1.1, 'sawtooth', 0.24);
+    noise(1.3, 170, 0.7, 0.28, 0.001, { rev:true });
+    setTimeout(() => { sub(0.6, 65, 0.16); noise(0.6, 110, 0.7, 0.16, 0.001, { rev:true }); }, 80);
+    setTimeout(() => noise(0.7, 200, 1.0, 0.11), 200);
+    setTimeout(() => noise(0.5, 350, 1.5, 0.08, 0.001, { rev:true }), 400);  // distant echo
+  }
+  else if (k === 'deploy') {
+    tone(320, 520, 0.10, 'sine', 0.05);
+    tone(520, 720, 0.08, 'triangle', 0.04);
+    setTimeout(() => { tone(720, 920, 0.06, 'sine', 0.035); click(1400, 0.04); }, 50);
+  }
+  else if (k === 'ui_click') { click(1100, 0.04); tone(900, 700, 0.04, 'square', 0.025); }
+  else if (k === 'ui_select') {
+    tone(620, 900, 0.06, 'triangle', 0.04);
+    setTimeout(() => { tone(900, 1240, 0.06, 'triangle', 0.035); click(1500, 0.05); }, 30);
+  }
+  else if (k === 'win') {
+    const ns = [440, 554, 659, 880, 1108];
+    ns.forEach((f, i) => setTimeout(() => {
+      tone(f, f, 0.28, 'triangle', 0.07);
+      tone(f*2, f*2, 0.28, 'sine', 0.04, { rev:true });
+      tone(f*0.5, f*0.5, 0.28, 'sine', 0.025);
+    }, i*110));
+  }
+  else if (k === 'lose') {
+    const ns = [440, 370, 277, 220, 165];
+    ns.forEach((f, i) => setTimeout(() => {
+      tone(f, f, 0.36, 'sawtooth', 0.08);
+      tone(f*0.5, f*0.5, 0.36, 'triangle', 0.05, { rev:true });
+    }, i*180));
+  }
+  else if (k === 'siren') {
+    const ac = ensureAudio(), n = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(500, n);
+    o.frequency.linearRampToValueAtTime(900, n+0.25);
+    o.frequency.linearRampToValueAtTime(500, n+0.50);
+    o.frequency.linearRampToValueAtTime(900, n+0.75);
+    o.frequency.linearRampToValueAtTime(500, n+1.00);
+    g.gain.setValueAtTime(0.07, n);
+    g.gain.exponentialRampToValueAtTime(0.001, n+1.05);
+    o.connect(g); g.connect(_outNode(true));
+    o.start(n); o.stop(n+1.1);
+  }
+  else if (k === 'heal') {
+    tone(700, 1100, 0.20, 'sine', 0.045, { rev:true });
+    setTimeout(() => tone(1100, 1600, 0.16, 'sine', 0.035, { rev:true }), 60);
+    setTimeout(() => click(1800, 0.04), 100);
+  }
+  else if (k === 'emp') {
+    tone(2400, 70, 0.75, 'square', 0.10, { rev:true });
+    tone(1900, 55, 0.55, 'sawtooth', 0.06);
+    noise(0.75, 1800, 4, 0.05, 0.005, { rev:true });
+    sub(0.45, 60, 0.12);
+  }
+  else if (k === 'lane_lost') {
+    const ns = [700, 550, 420, 320];
+    ns.forEach((f, i) => setTimeout(() => tone(f*1.3, f, 0.20, 'sawtooth', 0.08, { rev:true }), i*90));
+    sub(0.6, 55, 0.14);
+  }
+  else if (k === 'passive_cue') {
+    tone(800, 1400, 0.16, 'triangle', 0.045, { rev:true });
+    setTimeout(() => tone(1400, 1800, 0.13, 'sine', 0.035, { rev:true }), 60);
+    noise(0.22, 3000, 3, 0.025);
+  }
+  else if (k === 'cook_off') {
+    click(500, 0.10);
+    tone(180, 55, 0.32, 'square', 0.10);
+    noise(0.4, 480, 1.8, 0.10, 0.001, { rev:true });
+    sub(0.30, 90, 0.10);
+  }
+  else if (k === 'crash') {
+    click(400, 0.20);
+    sub(0.85, 45, 0.28);
+    noise(1.0, 150, 0.6, 0.22, 0.005, { rev:true });
+    tone(58, 22, 0.85, 'sawtooth', 0.18);
+    setTimeout(() => noise(0.5, 280, 1.4, 0.12, 0.001, { rev:true }), 100);
+  }
+  else if (k === 'ritual') {
+    tone(440, 110, 0.7, 'sawtooth', 0.07, { rev:true });
+    tone(660, 165, 0.7, 'triangle', 0.05, { rev:true });
+    noise(0.65, 380, 1.4, 0.04, 0.005, { rev:true });
+    sub(0.3, 80, 0.06);
+  }
+  else if (k === 'paycheck') {
+    [800, 1200, 900, 1400].forEach((f, i) => setTimeout(() => {
+      click(f*1.5, 0.04);
+      tone(f, f*1.3, 0.05, 'triangle', 0.04);
+    }, i*40));
+  }
+  else if (k === 'gore') {
+    noise(0.10, 400, 2.5, 0.10, 0.002);
+    tone(180, 75, 0.12, 'sawtooth', 0.06);
+    noise(0.18, 900, 1.2, 0.05);
+  }
+  else if (k === 'gore_big') {
+    click(220, 0.18);
+    noise(0.16, 280, 1.8, 0.16, 0.002);
+    tone(135, 55, 0.24, 'sawtooth', 0.09);
+    noise(0.32, 700, 1.0, 0.10, 0.001, { rev:true });
+    sub(0.22, 80, 0.08);
+  }
+  else if (k === 'tree_fall') {
+    noise(0.8, 180, 0.8, 0.10, 0.020);
+    tone(75, 35, 0.45, 'sawtooth', 0.07);
+    setTimeout(() => { sub(0.3, 50, 0.08); noise(0.25, 220, 1.5, 0.06); }, 380);
+  }
+  // ── NEW: ability sounds
+  else if (k === 'ability_ready') { tone(800, 1200, 0.10, 'triangle', 0.05); click(1600, 0.05); }
+  else if (k === 'ability_fire') { click(2000, 0.10); tone(900, 1500, 0.12, 'triangle', 0.06, { rev:true }); }
 }catch(e){} }
 
 
@@ -270,15 +516,20 @@ let toonGradientTex = null;
 let nextId = 1;
 
 function makeToonGradient(){
-  const c = document.createElement('canvas'); c.width=4; c.height=1;
+  // 6-band gradient — much richer color depth than 4 hard bands
+  const c = document.createElement('canvas'); c.width=8; c.height=1;
   const x = c.getContext('2d');
-  // 4 bands for richer cel shading
-  x.fillStyle='#404858'; x.fillRect(0,0,1,1);
-  x.fillStyle='#788090'; x.fillRect(1,0,1,1);
-  x.fillStyle='#c0c8d4'; x.fillRect(2,0,1,1);
-  x.fillStyle='#ffffff'; x.fillRect(3,0,1,1);
+  // Smooth gradient with knees at brightness boundaries — keeps cel-shaded feel but more colors
+  const grad = x.createLinearGradient(0, 0, 8, 0);
+  grad.addColorStop(0.00, '#28303a');     // deep shadow
+  grad.addColorStop(0.25, '#5a6478');     // shadow
+  grad.addColorStop(0.50, '#9aa4b4');     // mid
+  grad.addColorStop(0.72, '#d8dde6');     // light
+  grad.addColorStop(0.90, '#f2f5fa');     // bright
+  grad.addColorStop(1.00, '#ffffff');     // hot
+  x.fillStyle = grad; x.fillRect(0, 0, 8, 1);
   const t = new THREE.CanvasTexture(c);
-  t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter; t.needsUpdate = true;
+  t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearFilter; t.needsUpdate = true;
   return t;
 }
 function toonMat(color, opts){
@@ -296,7 +547,25 @@ function basicMat(color, opts){
 }
 function metalMat(color, opts){
   opts = opts||{};
-  return new THREE.MeshStandardMaterial({ color, roughness:opts.roughness||0.3, metalness:opts.metalness||0.85, flatShading:true });
+  // Real PBR: low roughness + high metalness for actual specular highlights
+  return new THREE.MeshStandardMaterial({
+    color,
+    roughness: opts.roughness != null ? opts.roughness : 0.35,
+    metalness: opts.metalness != null ? opts.metalness : 0.78,
+    flatShading: !!opts.flat,
+    envMapIntensity: 1.2,
+  });
+}
+// Painted metal (vehicle hulls) — semi-metallic with controlled roughness
+function paintedMat(color, opts){
+  opts = opts||{};
+  return new THREE.MeshStandardMaterial({
+    color,
+    roughness: opts.roughness != null ? opts.roughness : 0.55,
+    metalness: opts.metalness != null ? opts.metalness : 0.30,
+    flatShading: !!opts.flat,
+    envMapIntensity: 0.85,
+  });
 }
 function addOutline(mesh, thickness){
   thickness = thickness||1.05;
@@ -314,6 +583,32 @@ function addOutline(mesh, thickness){
 function disposeObject3D(obj){ if(!obj) return; obj.traverse(o=>{ if(o.geometry){try{o.geometry.dispose();}catch(e){}} if(o.material){const m=Array.isArray(o.material)?o.material:[o.material]; for(const x of m){try{ if(x.map) x.map.dispose(); if(x.dispose) x.dispose(); }catch(e){}} } }); }
 function removeAndDispose(mesh){ if(!mesh) return; if(mesh.parent) mesh.parent.remove(mesh); else if(scene) scene.remove(mesh); disposeObject3D(mesh); }
 
+// ── Rounded primitives — replace blocky boxes for body parts ──
+// Capsule pill = cylinder + 2 hemisphere caps. Pivots at center.
+function makeCapsule(radius, length, color, opts){
+  opts = opts||{};
+  const g = new THREE.Group();
+  const segs = opts.segs || 10;
+  const mat = opts.material || toonMat(color);
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, segs), mat);
+  g.add(body);
+  const top = new THREE.Mesh(new THREE.SphereGeometry(radius, segs, 6, 0, Math.PI*2, 0, Math.PI/2), mat);
+  top.position.y = length/2; g.add(top);
+  const bot = new THREE.Mesh(new THREE.SphereGeometry(radius, segs, 6, 0, Math.PI*2, Math.PI/2, Math.PI/2), mat);
+  bot.position.y = -length/2; g.add(bot);
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+// Tapered ellipsoid — head/torso shapes that aren't cubes
+function makeOvoid(w, h, d, color, opts){
+  opts = opts||{};
+  const mat = opts.material || toonMat(color);
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.5, 14, 10), mat);
+  m.scale.set(w, h, d);
+  m.castShadow = true;
+  return m;
+}
+
 function initThree(){
   const container = document.getElementById('threeContainer');
   const theme = getTheme();
@@ -329,17 +624,19 @@ function initThree(){
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = tod.name==='NIGHT' ? 0.85 : 1.25;
+  // Higher exposure so colors pop instead of looking washed out
+  renderer.toneMappingExposure = tod.name==='NIGHT' ? 0.95 : 1.45;
+  renderer.physicallyCorrectLights = true;
   container.innerHTML = '';
   container.appendChild(renderer.domElement);
   toonGradientTex = makeToonGradient();
   clock = new THREE.Clock();
 
-  // ── LIGHTS ─────────────────────────────────────────────────────────
-  // Hemisphere fill: sky tint above, ground tint below
-  scene.add(new THREE.HemisphereLight(tod.skyTop, theme.ground, tod.ambInt * 1.6));
-  // Key directional (sun/moon)
-  sun = new THREE.DirectionalLight(tod.sunHex, tod.sunInt);
+  // ── LIGHTS — 4-point setup for cinematic look ──
+  // Hemisphere — strong sky/ground tint
+  scene.add(new THREE.HemisphereLight(tod.skyTop, theme.ground, tod.ambInt * 2.0));
+  // Key (sun) — main directional, casts shadow
+  sun = new THREE.DirectionalLight(tod.sunHex, tod.sunInt * 1.4);
   sun.position.set(28, tod.sunY, 18);
   sun.castShadow = true;
   sun.shadow.mapSize.width = Q.shadowMap; sun.shadow.mapSize.height = Q.shadowMap;
@@ -347,15 +644,19 @@ function initThree(){
   sun.shadow.camera.top = 35; sun.shadow.camera.bottom = -35;
   sun.shadow.camera.near = 5; sun.shadow.camera.far = 130;
   sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.02;
   scene.add(sun);
-  // Cool fill from opposite for shadow depth
-  const fill = new THREE.DirectionalLight(tod.name==='NIGHT'?0x4060a0:0xa0c4ff, tod.name==='NIGHT'?0.25:0.6);
+  // Cool fill from opposite — boosts shadow detail without flattening
+  const fill = new THREE.DirectionalLight(tod.name==='NIGHT'?0x6090e0:0x88b8ff, tod.name==='NIGHT'?0.35:0.85);
   fill.position.set(-22, 28, -20); scene.add(fill);
-  // Warm rim from behind for edge highlight
-  const rim = new THREE.DirectionalLight(tod.name==='NIGHT'?0x2030a0:0xffd070, tod.name==='NIGHT'?0.18:0.5);
-  rim.position.set(0, 16, -32); scene.add(rim);
-  // Ambient base so nothing pure black
-  scene.add(new THREE.AmbientLight(tod.ambHex, tod.ambInt * 0.5));
+  // Warm rim from behind — character edge highlight
+  const rim = new THREE.DirectionalLight(tod.name==='NIGHT'?0x4050c0:0xffd080, tod.name==='NIGHT'?0.30:0.85);
+  rim.position.set(-8, 14, -34); scene.add(rim);
+  // Bottom bounce — fakes ground-bounced light, prevents underbellies going black
+  const bounce = new THREE.DirectionalLight(tod.name==='NIGHT'?0x102040:0x90b070, tod.name==='NIGHT'?0.10:0.35);
+  bounce.position.set(0, -10, 0); scene.add(bounce);
+  // Ambient — weak global so nothing's pure black
+  scene.add(new THREE.AmbientLight(tod.ambHex, tod.ambInt * 0.7));
 
   raycaster = new THREE.Raycaster();
   pointer = new THREE.Vector2();
@@ -855,9 +1156,17 @@ function onPointerUp(e){
   if (pointers.size === 0) {
     STATE.cam.panning = false;
     document.getElementById('threeContainer').classList.remove('grabbing');
-    if (!dragMoved && !wasPan && !wasPinch && STATE.selectedCard) {
-      const hit = screenToWorld(e.clientX, e.clientY);
-      if (hit) attemptDeploy(STATE.selectedCard, hit.x, hit.z);
+    if (!dragMoved && !wasPan && !wasPinch) {
+      if (STATE.selectedCard) {
+        // Card mode → deploy
+        const hit = screenToWorld(e.clientX, e.clientY);
+        if (hit) attemptDeploy(STATE.selectedCard, hit.x, hit.z);
+      } else {
+        // No card → try to select a deployed unit for ability
+        const u = pickUnitAtScreen(e.clientX, e.clientY);
+        if (u) selectUnit(u);
+        else if (SELECTED_UNIT) selectUnit(null);
+      }
     }
     panStart = null;
   }
@@ -947,90 +1256,121 @@ function buildInfantryRig(def, side, opts){
   const hips = new THREE.Group();
   hips.position.y = 0.78;
   root.add(hips);
-  // Belt with team chest stripe
-  const belt = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.10, 0.34), toonMat(darkCol));
-  belt.position.y = 0; hips.add(belt);
+  // Beveled belt — flatter cylinder for hips
+  const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.27, 0.13, 12), toonMat(darkCol));
+  belt.scale.x = 1.05; belt.position.y = 0; hips.add(belt);
 
-  // ── TORSO (rotates from hips) ─────
+  // ── TORSO (rotates from hips) — ovoid chest, no cube edges ─────
   const torso = new THREE.Group();
   torso.position.y = 0.05;
   hips.add(torso);
-  const chest = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.45, 0.32), toonMat(bodyCol));
-  chest.position.y = 0.20; chest.castShadow = true; torso.add(chest);
-  // Team stripe chest band
-  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.13, 0.06), basicMat(teamCol));
-  stripe.position.set(0, 0.20, 0.18); torso.add(stripe);
-  // Backpack hint
-  const pack = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.32, 0.16), toonMat(0x202020));
-  pack.position.set(0, 0.18, -0.20); torso.add(pack);
+  // Chest as scaled sphere — looks like a barrel torso
+  const chest = makeOvoid(0.55, 0.50, 0.34, bodyCol);
+  chest.position.y = 0.22; torso.add(chest);
+  // Team stripe — wraps chest as a thin partial torus
+  const stripeRing = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.06, 5, 14, Math.PI * 1.4),
+    basicMat(teamCol));
+  stripeRing.rotation.y = Math.PI;
+  stripeRing.rotation.x = Math.PI/2;
+  stripeRing.position.set(0, 0.22, 0); torso.add(stripeRing);
+  // Backpack — rounded
+  const pack = makeOvoid(0.36, 0.34, 0.18, 0x202020);
+  pack.position.set(0, 0.20, -0.22); torso.add(pack);
 
-  // ── NECK + HEAD ─────
+  // ── NECK + HEAD — sphere head, no cube ─────
   const neck = new THREE.Group();
-  neck.position.y = 0.45;
+  neck.position.y = 0.48;
   torso.add(neck);
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), toonMat(skinCol));
-  head.position.y = 0.22; head.castShadow = true; neck.add(head);
-  // Eyes (white box + black pupil)
-  for (let xs of [-0.085, 0.085]) {
-    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.02), basicMat(0xffffff));
-    eye.position.set(xs, 0.24, 0.21); neck.add(eye);
-    const pup = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.045, 0.02), basicMat(0x101010));
-    pup.position.set(xs, 0.23, 0.22); neck.add(pup);
+  // Spherical head, slightly squashed
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.21, 14, 10), toonMat(skinCol));
+  head.scale.y = 1.05;
+  head.position.y = 0.22; head.castShadow = true; neck.add(head); root.userData.headRef = head;
+  // Eyes — small ellipsoid whites + tiny pupil sphere
+  for (let xs of [-0.08, 0.08]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), basicMat(0xffffff));
+    eye.scale.set(1.3, 1, 0.5); eye.position.set(xs, 0.24, 0.18); neck.add(eye);
+    const pup = new THREE.Mesh(new THREE.SphereGeometry(0.018, 6, 5), basicMat(0x080808));
+    pup.position.set(xs, 0.23, 0.21); neck.add(pup);
   }
-  // Helmet variant per faction
+  // Helmet — rounded shapes per faction
   const helmet = new THREE.Group();
   helmet.position.y = 0.4;
   if (def.faction === 'rebels') {
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 8, 0, Math.PI*2, 0, Math.PI/2.1), toonMat(darkCol));
+    // Bowl helmet
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 8, 0, Math.PI*2, 0, Math.PI/2.1), toonMat(darkCol));
     dome.position.y = 0; helmet.add(dome);
-    const band = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.05, 0.43), basicMat(glowCol));
-    band.position.y = -0.04; helmet.add(band);
+    // Bandana band — torus instead of box
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.025, 5, 16), basicMat(glowCol));
+    band.rotation.x = Math.PI/2; band.position.y = -0.02; helmet.add(band);
   } else if (def.faction === 'empire') {
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.23, 12, 8, 0, Math.PI*2, 0, Math.PI/2), toonMat(darkCol));
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.23, 14, 9, 0, Math.PI*2, 0, Math.PI/2), toonMat(darkCol));
     helmet.add(dome);
-    const brim = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.04, 0.48), toonMat(darkCol));
-    brim.position.y = -0.02; helmet.add(brim);
-    const crest = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.18, 0.32), basicMat(glowCol));
+    // Round brim
+    const brim = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.03, 5, 18), toonMat(darkCol));
+    brim.rotation.x = Math.PI/2; brim.position.y = -0.02; helmet.add(brim);
+    // Crest — capsule
+    const crest = makeCapsule(0.022, 0.18, glowCol);
+    crest.scale.set(1, 1, 6);
     crest.position.y = 0.20; helmet.add(crest);
   } else if (def.faction === 'mercs') {
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.25, 12, 8, 0, Math.PI*2, 0, Math.PI/2.05), toonMat(0x1a1a1a));
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.25, 14, 9, 0, Math.PI*2, 0, Math.PI/2.05), toonMat(0x161616));
     dome.position.y = -0.02; helmet.add(dome);
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.10, 0.04), basicMat(glowCol, { transparent:true, opacity:0.85 }));
-    visor.position.set(0, -0.04, 0.21); helmet.add(visor);
-    // Side antenna
+    // Curved visor — half-torus
+    const visor = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.04, 5, 12, Math.PI),
+      basicMat(glowCol, { transparent:true, opacity:0.9 }));
+    visor.rotation.x = Math.PI/2; visor.rotation.z = Math.PI;
+    visor.position.set(0, -0.04, 0.0); helmet.add(visor);
     const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.18, 5), toonMat(0x101010));
     ant.position.set(0.18, 0.10, 0); ant.rotation.z = -0.3; helmet.add(ant);
   } else {
-    // Cult — horned hood
-    const hood = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.45, 8), toonMat(darkCol));
+    // Cult hood — smoother cone with rounded base
+    const hood = new THREE.Mesh(new THREE.ConeGeometry(0.27, 0.48, 12), toonMat(darkCol));
     hood.position.y = 0.10; helmet.add(hood);
+    const hoodBase = new THREE.Mesh(new THREE.SphereGeometry(0.27, 12, 7, 0, Math.PI*2, 0, Math.PI/2), toonMat(darkCol));
+    hoodBase.position.y = -0.10; helmet.add(hoodBase);
     for (let xs of [-0.13, 0.13]) {
-      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.22, 5), toonMat(0xe8dcc8));
+      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.22, 6), toonMat(0xe8dcc8));
       horn.position.set(xs, 0.30, -0.05); horn.rotation.x = 0.4; helmet.add(horn);
     }
-    const eyebar = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.045, 0.04), basicMat(glowCol));
-    eyebar.position.set(0, -0.03, 0.20); helmet.add(eyebar);
+    // Glowing eye slit — thin curved torus arc
+    const eyebar = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.022, 4, 10, Math.PI * 0.6),
+      basicMat(glowCol));
+    eyebar.rotation.x = Math.PI/2; eyebar.rotation.z = Math.PI/2;
+    eyebar.position.set(0, -0.02, 0.20); helmet.add(eyebar);
   }
   neck.add(helmet);
 
-  // ── ARMS (rotate from shoulder) ─────
-  const leftArm = new THREE.Group();   leftArm.position.set(-0.32, 0.36, 0);   torso.add(leftArm);
-  const rightArm = new THREE.Group();  rightArm.position.set( 0.32, 0.36, 0);  torso.add(rightArm);
+  // ── ARMS — capsule biceps, sphere hands ─────
+  const leftArm = new THREE.Group();   leftArm.position.set(-0.30, 0.40, 0);   torso.add(leftArm);
+  const rightArm = new THREE.Group();  rightArm.position.set( 0.30, 0.40, 0);  torso.add(rightArm);
   for (const arm of [leftArm, rightArm]) {
-    const bicep = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.34, 0.18), toonMat(bodyCol));
-    bicep.position.y = -0.17; bicep.castShadow = true; arm.add(bicep);
-    const hand = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.16), toonMat(0x2a1a12));
+    const bicep = makeCapsule(0.09, 0.30, bodyCol);
+    bicep.position.y = -0.18; arm.add(bicep);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 7), toonMat(0x2a1a12));
+    hand.scale.set(1.0, 0.85, 1.0);
     hand.position.y = -0.40; arm.add(hand);
   }
+  // Shoulder pauldrons — small spheres
+  for (const [xs, parent] of [[-0.30, leftArm], [0.30, rightArm]]) {
+    const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.115, 10, 7, 0, Math.PI*2, 0, Math.PI/1.6), toonMat(bodyCol));
+    shoulder.position.set(0, 0.04, 0); shoulder.castShadow = true;
+    parent.add(shoulder);
+  }
 
-  // ── LEGS (rotate from hip) ─────
-  const leftLeg = new THREE.Group();   leftLeg.position.set(-0.13, -0.05, 0);   hips.add(leftLeg);
-  const rightLeg = new THREE.Group();  rightLeg.position.set( 0.13, -0.05, 0);  hips.add(rightLeg);
+  // ── LEGS — capsule thighs, rounded boot ─────
+  const leftLeg = new THREE.Group();   leftLeg.position.set(-0.12, -0.05, 0);   hips.add(leftLeg);
+  const rightLeg = new THREE.Group();  rightLeg.position.set( 0.12, -0.05, 0);  hips.add(rightLeg);
   for (const leg of [leftLeg, rightLeg]) {
-    const thigh = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.42, 0.20), toonMat(darkCol));
-    thigh.position.y = -0.23; thigh.castShadow = true; leg.add(thigh);
-    const boot = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.14, 0.28), toonMat(0x141008));
-    boot.position.set(0, -0.50, 0.04); boot.castShadow = true; leg.add(boot);
+    const thigh = makeCapsule(0.10, 0.36, darkCol);
+    thigh.position.y = -0.23; leg.add(thigh);
+    // Boot — half-sphere top + cylinder sole
+    const boot = new THREE.Group();
+    const bootTop = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 7, 0, Math.PI*2, 0, Math.PI/2),
+      toonMat(0x141008));
+    bootTop.position.y = -0.0; boot.add(bootTop);
+    const bootToe = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.10, 0.12, 10), toonMat(0x141008));
+    bootToe.rotation.x = Math.PI/2; bootToe.position.set(0, -0.05, 0.06); boot.add(bootToe);
+    boot.position.set(0, -0.50, 0.02); leg.add(boot);
   }
 
   // ── WEAPON (parented to right arm hand) ─────
@@ -2826,6 +3166,26 @@ function syncMeshes(dt){
     }
   }
   drawMinimap();
+  tickAbilityHUD();
+  // Selection ring under selected unit
+  if (SELECTED_UNIT && SELECTED_UNIT.hp > 0) {
+    const u = SELECTED_UNIT;
+    if (!STATE._selRing) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.85, 1.05, 28),
+        new THREE.MeshBasicMaterial({ color:0xf0c060, transparent:true, opacity:0.9, side:THREE.DoubleSide, depthWrite:false })
+      );
+      ring.rotation.x = -Math.PI/2;
+      scene.add(ring);
+      STATE._selRing = ring;
+    }
+    STATE._selRing.position.set(u.x, 0.08, u.z);
+    STATE._selRing.scale.setScalar(1 + Math.sin(performance.now() * 0.005) * 0.06);
+    STATE._selRing.material.opacity = 0.7 + Math.sin(performance.now() * 0.005) * 0.2;
+  } else if (STATE._selRing) {
+    removeAndDispose(STATE._selRing);
+    STATE._selRing = null;
+  }
   // Vignette
   if (STATE.bloodIntensity > 0) {
     STATE.bloodIntensity = Math.max(0, STATE.bloodIntensity - dt * 0.25);
@@ -2892,6 +3252,7 @@ function update(dt) {
     if (u.warCry > 0) u.warCry -= dt;
     if (u.berserk > 0) u.berserk -= dt;
     if (u.aegis > 0) u.aegis -= dt;
+    if (u.abCD > 0) u.abCD = Math.max(0, u.abCD - dt);
     if (u.stunned > 0) { u.stunned -= dt; u.moving = false; continue; }
     if (u.smoked > 0) u.smoked -= dt;
     if (u.wounded && u.def.type === 'ground' && !['tank','apc','lightV','artillery','aa'].includes(u.def.roleKey)) {
@@ -3104,6 +3465,154 @@ function triggerPower(key, x, z) {
   }
   return true;
 }
+// ── ACTIVE ABILITIES — click a deployed unit, then trigger its ability ─
+// One ability per role. Each has a cooldown stored on the unit (u.abCD).
+const UNIT_ABILITIES = {
+  rifleman:    { name:'Suppressing Fire',   cd:14, desc:'Triple-burst shot at next target', sfx:'burst3', icon:'⫶' },
+  scout:       { name:'Sprint',             cd:12, desc:'+80% speed for 5s',                sfx:'ui_select', icon:'»' },
+  swarm:       { name:'Rallying Howl',      cd:18, desc:'Heal 30% to all swarm allies',     sfx:'heal', icon:'⚒' },
+  sniper:      { name:'Aimed Shot',         cd:16, desc:'Instant 600 dmg to current target',sfx:'snipe', icon:'◎' },
+  heavygunner: { name:'Bracing',            cd:14, desc:'-50% dmg taken, +30% fire rate 5s',sfx:'minigun', icon:'■' },
+  flamer:      { name:'Inferno',            cd:18, desc:'Wide cone, 3x damage 4s',          sfx:'flame', icon:'▲' },
+  grenadier:   { name:'Cluster Volley',     cd:18, desc:'5 grenades scatter at target',     sfx:'grenade', icon:'◉' },
+  lightV:      { name:'Boost',              cd:12, desc:'+100% speed for 4s',               sfx:'ability_fire', icon:'»' },
+  apc:         { name:'Smoke Vent',         cd:16, desc:'Drops smoke, allies near get cover',sfx:'ui_select', icon:'☁' },
+  tank:        { name:'HEAT Round',         cd:20, desc:'Triple-damage shell, big splash',  sfx:'cannon', icon:'★' },
+  artillery:   { name:'Barrage',            cd:24, desc:'5 shells at target area',          sfx:'mortar', icon:'☄' },
+  aa:          { name:'Lock-On',            cd:14, desc:'+200% damage, instant fire 6s',    sfx:'flak', icon:'⌖' },
+  medic:       { name:'Field Triage',       cd:18, desc:'Heal all allies in 6m to full',    sfx:'heal', icon:'✚' },
+  gunship:     { name:'Strafe Run',         cd:18, desc:'Spray 8 rockets in cone',          sfx:'rocket', icon:'≪' },
+  commander:   { name:'Rally Cry',          cd:22, desc:'+50% dmg to all allies for 8s',    sfx:'passive_cue', icon:'★' },
+};
+function getUnitAbility(u) {
+  if (!u || !u.def) return null;
+  return UNIT_ABILITIES[u.def.roleKey] || null;
+}
+let SELECTED_UNIT = null;   // currently selected deployed unit
+
+function pickUnitAtScreen(x, y) {
+  // Find the closest player unit whose mesh intersects the click ray.
+  const c = document.getElementById('threeContainer');
+  const r = c.getBoundingClientRect();
+  pointer.x = ((x - r.left) / r.width) * 2 - 1;
+  pointer.y = -((y - r.top) / r.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  let bestU = null, bestD = Infinity;
+  for (const u of STATE.units) {
+    if (u.side !== 'player' || u.hp <= 0 || u.deathStarted) continue;
+    const mesh = unitObjects.get(u.id); if (!mesh) continue;
+    // Test against an invisible bounding sphere centered on unit
+    const cy = u.def.type === 'air' ? 3.8 : 0.9;
+    const sphere = new THREE.Sphere(new THREE.Vector3(u.x, cy, u.z), Math.max(0.7, u.def.radius * 1.6));
+    if (raycaster.ray.intersectsSphere(sphere)) {
+      const d = raycaster.ray.origin.distanceTo(sphere.center);
+      if (d < bestD) { bestD = d; bestU = u; }
+    }
+  }
+  return bestU;
+}
+function selectUnit(u) {
+  if (SELECTED_UNIT === u) return;
+  SELECTED_UNIT = u;
+  renderAbilityHUD();
+  if (u) playSound('ui_select');
+}
+function fireUnitAbility() {
+  const u = SELECTED_UNIT;
+  if (!u || u.hp <= 0) return;
+  const ab = getUnitAbility(u); if (!ab) return;
+  if ((u.abCD || 0) > 0) { showToast('ABILITY ON CD'); return; }
+  u.abCD = ab.cd;
+  playSound(ab.sfx || 'ability_fire');
+  // Visual ping
+  addFX({ type:'ring', x:u.x, y:0.1, z:u.z, t:0, dur:0.6, size:2, color:0xf0c060 });
+  // Apply effect
+  const r = u.def.roleKey;
+  if (r === 'rifleman') { u.burstRemaining = 5; u.burstTimer = 0; if (u.target && u.target.hp > 0) fireBurstShot(u, u.target); }
+  else if (r === 'scout' || r === 'lightV') { u.warCry = 5; }
+  else if (r === 'swarm') {
+    let n = 0;
+    for (const a of STATE.units) if (a.side === 'player' && a.def.roleKey === 'swarm' && a.hp > 0) { a.hp = Math.min(a.maxHp, a.hp + a.maxHp * 0.3); addFX({ type:'spark', x:a.x, y:1, z:a.z, t:0, dur:0.5, vx:0, vy:1.5, vz:0 }); n++; }
+    showToast('RALLIED ' + n);
+  }
+  else if (r === 'sniper') {
+    if (u.target && u.target.hp > 0) {
+      applyDamage(u.target, 600, u);
+      addFX({ type:'beam', x:u.x, y:0.9, z:u.z, tx:u.target.x, tz:u.target.z, t:0, dur:0.5, color:0xff4040 });
+      triggerShake(0.2, 0.18);
+    }
+  }
+  else if (r === 'heavygunner') { u.aegis = 5; u.warCry = 5; }
+  else if (r === 'flamer') {
+    // Wide cone burst
+    for (let i = 0; i < 12; i++) {
+      const ang = u.facing + (Math.random() - 0.5) * 0.9;
+      const dx = Math.sin(ang), dz = Math.cos(ang);
+      const px = u.x + dx * (1 + Math.random() * 4), pz = u.z + dz * (1 + Math.random() * 4);
+      addFX({ type:'flame', x:px, y:0.6, z:pz, t:0, dur:0.8 });
+      for (const e of STATE.units) {
+        if (e.side === u.side || e.hp <= 0) continue;
+        if (Math.hypot(e.x - px, e.z - pz) < 1.4) applyDamage(e, effDmg(u) * 0.95, u);
+      }
+    }
+    triggerShake(0.18, 0.25);
+  }
+  else if (r === 'grenadier') {
+    const tx = u.target ? u.target.x : u.x + Math.sin(u.facing) * 8;
+    const tz = u.target ? u.target.z : u.z + Math.cos(u.facing) * 8;
+    for (let i = 0; i < 5; i++) {
+      const ox = tx + (Math.random() - 0.5) * 4;
+      const oz = tz + (Math.random() - 0.5) * 4;
+      safeSetTimeout(() => explodeAt(ox, 0.3, oz, 110, 2.4, u.side, false), i * 150);
+    }
+    showToast('CLUSTER VOLLEY');
+  }
+  else if (r === 'apc') {
+    addFX({ type:'smoke_zone', x:u.x, y:0.1, z:u.z, t:0, dur:5, radius:3 });
+    for (const a of STATE.units) if (a.side === 'player' && Math.hypot(a.x - u.x, a.z - u.z) < 3) a.aegis = 5;
+  }
+  else if (r === 'tank') {
+    if (u.target && u.target.hp > 0) {
+      applyDamage(u.target, effDmg(u) * 3, u);
+      explodeAt(u.target.x, 0.5, u.target.z, effDmg(u), 3.0, u.side, true);
+      triggerShake(0.4, 0.3);
+    }
+  }
+  else if (r === 'artillery') {
+    const tx = u.target ? u.target.x : u.x + Math.sin(u.facing) * 12;
+    const tz = u.target ? u.target.z : u.z + Math.cos(u.facing) * 12;
+    for (let i = 0; i < 5; i++) {
+      const ox = tx + (Math.random() - 0.5) * 4, oz = tz + (Math.random() - 0.5) * 4;
+      addFX({ type:'drop_marker', x:ox, z:oz, y:0.1, t:0, dur:Math.max(0.6, i * 0.5) });
+      safeSetTimeout(() => explodeAt(ox, 0.3, oz, 200, 3.2, u.side, true), i * 500);
+    }
+    triggerShake(0.3, 0.4);
+  }
+  else if (r === 'aa') { u.warCry = 6; u.cooldown = 0; }
+  else if (r === 'medic') {
+    let n = 0;
+    for (const a of STATE.units) if (a.side === 'player' && a.hp > 0 && a.hp < a.maxHp && Math.hypot(a.x - u.x, a.z - u.z) < 6) { a.hp = a.maxHp; addFX({ type:'heal_beam', x:u.x, z:u.z, tx:a.x, tz:a.z, t:0, dur:0.5 }); n++; }
+    showToast('TRIAGE ' + n);
+  }
+  else if (r === 'gunship') {
+    // Spray rockets in a cone
+    for (let i = 0; i < 8; i++) {
+      const ang = u.facing + (Math.random() - 0.5) * 0.6;
+      const dx = Math.sin(ang), dz = Math.cos(ang);
+      const tx = u.x + dx * (8 + Math.random() * 6), tz = u.z + dz * (8 + Math.random() * 6);
+      safeSetTimeout(() => {
+        STATE.projectiles.push({ id:nextId++, x:u.x, y:3.5, z:u.z, attacker:u, tx, tz, speed:20, kind:'rocket', dmg:effDmg(u) * 1.2, splash:1.8, side:u.side, alive:true, arc:true, arcH:2, arcT:0, trail:true });
+      }, i * 80);
+    }
+  }
+  else if (r === 'commander') {
+    let n = 0;
+    for (const a of STATE.units) if (a.side === 'player' && a.hp > 0) { a.warCry = 8; n++; }
+    showToast('RALLY ' + n);
+  }
+  renderAbilityHUD();
+}
+
 function attemptDeploy(key, x, z) {
   const cd = STATE.cardCooldowns || {};
   if (cd[key] && cd[key] > 0) { showToast('CARD ON COOLDOWN'); playSound('ui_click'); return; }
@@ -3239,6 +3748,50 @@ function updateHUD() {
     el.classList.toggle('unaffordable', STATE.energy < cost);
   });
 }
+// ── Ability HUD ────────────────────────────────────────────────────────
+function renderAbilityHUD(){
+  const hud = document.getElementById('abilityHUD');
+  if (!hud) return;
+  if (!SELECTED_UNIT || SELECTED_UNIT.hp <= 0) { hud.style.display = 'none'; return; }
+  const u = SELECTED_UNIT;
+  const ab = getUnitAbility(u);
+  if (!ab) { hud.style.display = 'none'; return; }
+  hud.style.display = 'flex';
+  document.getElementById('abUnitName').textContent = u.def.name + ' · HP ' + Math.ceil(u.hp) + '/' + Math.ceil(u.maxHp);
+  document.getElementById('abName').textContent = ab.icon + '  ' + ab.name;
+  document.getElementById('abDesc').textContent = ab.desc;
+  const fire = document.getElementById('abFire');
+  const cd = u.abCD || 0;
+  if (cd > 0) {
+    fire.textContent = cd.toFixed(1) + 's';
+    fire.style.background = 'linear-gradient(180deg,#3a4050,#1a2030)';
+    fire.style.color = '#888';
+    fire.style.boxShadow = 'none';
+    fire.style.borderColor = '#444';
+    fire.disabled = true;
+  } else {
+    fire.textContent = 'FIRE';
+    fire.style.background = 'linear-gradient(180deg,#f0c060,#c08020)';
+    fire.style.color = '#100600';
+    fire.style.boxShadow = '0 0 14px rgba(240,196,96,0.7)';
+    fire.style.borderColor = '#fff';
+    fire.disabled = false;
+  }
+  const port = document.getElementById('abPortrait');
+  port.innerHTML = cardIconSVG(u.key, 46);
+}
+function tickAbilityHUD(){
+  // Auto-deselect if unit died or de-spawned
+  if (SELECTED_UNIT) {
+    if (SELECTED_UNIT.hp <= 0 || SELECTED_UNIT.deathStarted || !STATE.units.includes(SELECTED_UNIT)) {
+      SELECTED_UNIT = null;
+      renderAbilityHUD();
+      return;
+    }
+    renderAbilityHUD();
+  }
+}
+
 function renderHand() {
   const h = document.getElementById('hand'); h.innerHTML = '';
   const cd = STATE.cardCooldowns || {};
@@ -3318,6 +3871,71 @@ function drawMinimap() {
   ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
 }
 
+// ── 3D PORTRAIT BAKER ─────────────────────────────────────────────────
+// At boot, render every unit/role into a small offscreen scene, capture as
+// data URL, cache in CARD_PORTRAITS. Cards then show real 3D thumbnails
+// with proper lighting instead of flat SVG line drawings.
+const CARD_PORTRAITS = {};   // key -> dataURL string
+const CARD_BAKE_SIZE = 256;
+let _portraitRenderer = null, _portraitScene = null, _portraitCam = null;
+function _ensurePortraitRig(){
+  if (_portraitRenderer) return;
+  const c = document.createElement('canvas');
+  c.width = CARD_BAKE_SIZE; c.height = CARD_BAKE_SIZE;
+  _portraitRenderer = new THREE.WebGLRenderer({ canvas:c, antialias:true, alpha:true, preserveDrawingBuffer:true });
+  _portraitRenderer.setPixelRatio(1);
+  _portraitRenderer.setSize(CARD_BAKE_SIZE, CARD_BAKE_SIZE, false);
+  _portraitRenderer.setClearColor(0x000000, 0);   // transparent
+  _portraitRenderer.outputEncoding = THREE.sRGBEncoding;
+  _portraitRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+  _portraitRenderer.toneMappingExposure = 1.4;
+  _portraitScene = new THREE.Scene();
+  // Studio lighting — bright, punchy
+  _portraitScene.add(new THREE.HemisphereLight(0xffffff, 0x404060, 1.0));
+  const k = new THREE.DirectionalLight(0xffeed0, 1.6); k.position.set(4, 8, 6); _portraitScene.add(k);
+  const f = new THREE.DirectionalLight(0x8090ff, 0.8); f.position.set(-5, 4, -3); _portraitScene.add(f);
+  const r = new THREE.DirectionalLight(0xffd060, 0.7); r.position.set(0, 3, -8); _portraitScene.add(r);
+  _portraitCam = new THREE.PerspectiveCamera(28, 1, 0.1, 50);
+  _portraitCam.position.set(2.4, 1.6, 2.6);
+  _portraitCam.lookAt(0, 0.6, 0);
+}
+function bakeCardPortrait(key){
+  const def = UNITS[key]; if (!def) return null;
+  _ensurePortraitRig();
+  // Build the unit mesh once, render it, dispose
+  const mesh = buildUnitMesh(def, 'player');
+  // Center-stage: vehicles get backed off a bit, infantry centered standing
+  if (def.type === 'air') {
+    mesh.position.y = -2.6;
+    _portraitCam.position.set(2.4, 0.4, 2.6);
+  } else if (['tank','apc','artillery'].includes(def.roleKey)) {
+    mesh.scale.setScalar(0.92);
+    mesh.position.y = -0.3;
+    _portraitCam.position.set(2.6, 1.4, 2.4);
+  } else if (def.roleKey === 'lightV' || def.roleKey === 'aa') {
+    mesh.position.y = -0.1;
+    _portraitCam.position.set(2.4, 1.3, 2.4);
+  } else {
+    // Infantry — slight low angle, 3/4 view
+    _portraitCam.position.set(1.7, 1.3, 2.0);
+  }
+  mesh.rotation.y = Math.PI / 5;
+  _portraitCam.lookAt(0, 0.7, 0);
+  _portraitScene.add(mesh);
+  _portraitRenderer.render(_portraitScene, _portraitCam);
+  const url = _portraitRenderer.domElement.toDataURL('image/png');
+  _portraitScene.remove(mesh);
+  disposeObject3D(mesh);
+  return url;
+}
+function bakeAllPortraits(){
+  // Bake every unit. Skip on failure (some browsers block toDataURL).
+  for (const k of Object.keys(UNITS)) {
+    try { const u = bakeCardPortrait(k); if (u) CARD_PORTRAITS[k] = u; }
+    catch(e){ console.warn('portrait bake failed for', k, e.message); }
+  }
+}
+
 function cardIconSVG(key, size) {
   const def = UNITS[key] || POWERS[key]; if (!def) return '';
   const fk = def.faction || 'rebels';
@@ -3325,6 +3943,19 @@ function cardIconSVG(key, size) {
   const main = '#' + pal.main.toString(16).padStart(6, '0');
   const dark = '#' + pal.accent.toString(16).padStart(6, '0');
   const glow = '#' + pal.glow.toString(16).padStart(6, '0');
+  // ── Use the baked 3D portrait when we have one (units only)
+  if (UNITS[key] && CARD_PORTRAITS[key]) {
+    const wh = size ? `width="${size}" height="${size}"` : 'width="100%" height="100%"';
+    return `<svg ${wh} viewBox="0 0 48 48" preserveAspectRatio="xMidYMid meet">
+      <defs><radialGradient id="bg-${key.replace(/_/g,'-')}" cx="50%" cy="40%" r="60%">
+        <stop offset="0%" stop-color="${main}" stop-opacity="0.6"/>
+        <stop offset="100%" stop-color="${dark}" stop-opacity="0.95"/>
+      </radialGradient></defs>
+      <circle cx="24" cy="24" r="22" fill="url(#bg-${key.replace(/_/g,'-')})" stroke="${glow}" stroke-width="0.6"/>
+      <image href="${CARD_PORTRAITS[key]}" x="2" y="2" width="44" height="44" preserveAspectRatio="xMidYMid meet"/>
+      <circle cx="24" cy="24" r="22" fill="none" stroke="${glow}" stroke-width="0.5" opacity="0.7"/>
+    </svg>`;
+  }
   const role = def.roleKey;
   const sa = size ? `width="${size}" height="${size}"` : 'width="100%" height="100%" preserveAspectRatio="xMidYMid meet"';
   const bp = `<circle cx="24" cy="24" r="22" fill="${dark}" opacity="0.4"/><circle cx="24" cy="24" r="20" fill="${main}" opacity="0.25" stroke="${glow}" stroke-width="0.5"/>`;
@@ -3787,6 +4418,12 @@ function bootGame() {
     return;
   }
   setupInput();
+  // Bake 3D card portraits — small offscreen render per unit. Async-ish via
+  // microtask so the title screen paints first, then portraits warm up.
+  Promise.resolve().then(() => {
+    try { bakeAllPortraits(); }
+    catch(e) { console.warn('Card portrait bake failed:', e.message); }
+  });
   goTitle();
   document.getElementById('loadingScreen').classList.remove('active');
 }
@@ -3820,4 +4457,11 @@ window.selectTimeOfDay = selectTimeOfDay;
 window.toggleCheatMode = toggleCheatMode;
 window.unlockEverythingNow = unlockEverythingNow;
 window.resetProgressConfirm = resetProgressConfirm;
+window.fireUnitAbility = fireUnitAbility;
+window.selectUnit = selectUnit;
+// Debug exports
+window.CARD_PORTRAITS = CARD_PORTRAITS;
+window.STATE = STATE;
+window.UNITS = UNITS;
+window.spawnUnit = spawnUnit;
 
