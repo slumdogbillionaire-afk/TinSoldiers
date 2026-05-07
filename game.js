@@ -3420,6 +3420,20 @@ function cycleHandSlot(key) {
 function loop(ts) {
   requestAnimationFrame(loop);
   if (!STATE.running) return;
+  // Guard: if renderer/scene/camera weren't created (init failed), don't crash silently.
+  // Surface a one-time error so the user sees something actionable.
+  if (!renderer || !scene || !camera) {
+    if (!STATE._initWarned) {
+      STATE._initWarned = true;
+      console.error('Tin Soldiers: renderer/scene/camera missing — initThree() likely failed. Check earlier console errors (WebGL? Three.js load?).');
+      const ls = document.getElementById('loadingScreen');
+      if (ls) {
+        ls.classList.add('active');
+        ls.textContent = '3D INIT FAILED — check browser console (F12)';
+      }
+    }
+    return;
+  }
   ensureCanvasSize();
   if (!STATE.lastTime) STATE.lastTime = ts;
   const dt = Math.min(0.05, (ts - STATE.lastTime) / 1000);
@@ -4208,7 +4222,17 @@ function bootGame() {
   }
   if (STATE.progress.cheatMode) unlockEverything(false);
   normalizeDeck();
-  initThree();
+  try {
+    initThree();
+  } catch (e) {
+    console.error('initThree failed:', e);
+    const ls = document.getElementById('loadingScreen');
+    if (ls) {
+      ls.classList.add('active');
+      ls.textContent = '3D INIT FAILED: ' + (e.message || 'unknown error');
+    }
+    return;
+  }
   setupInput();
   goTitle();
   document.getElementById('loadingScreen').classList.remove('active');
