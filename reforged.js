@@ -211,7 +211,7 @@ const STATE = {
   running:false, paused:false, matchId:0, matchEnded:false,
   energy:5, maxEnergy:10, energyRate:1/2.4,
   enemyEnergy:5, enemyHand:[], enemyHandPool:[], enemyCooldowns:{},
-  hand:[], cardCooldowns:{},
+  hand:[], cardCooldowns:{}, handSlots:[], deckQueue:[],
   units:[], projectiles:[], fx:[], towers:[], forestTrees:[], craters:[], obstacles:[], mines:[],
   timer:180, selectedCard:null, lastTime:0, currentMission:null, toastTimer:0,
   progress:null, armoryTab:'units', pendingMission:null,
@@ -242,6 +242,15 @@ function getGore(){ return GORE_LEVELS[(STATE.progress&&STATE.progress.gore)||'m
 function getTOD(){ return TIME_OF_DAY[(STATE.progress&&STATE.progress.timeOfDay)||'day']||TIME_OF_DAY.day; }
 
 const DECK_UNITS_MAX=8, DECK_UNITS_MIN=5, DECK_POWERS_MAX=2, DECK_POWERS_MIN=1;
+// Pass-B rotating hand: how many cards are visible at once
+const HAND_SIZE = 4;
+function shuffleArray(a){
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 function validPowersForFaction(fk){ const u=STATE.progress.unlockedPowers||[], fl=FACTION_POWERS[fk]||[]; return u.filter(k=>fl.includes(k)); }
 function normalizeDeck(){
   const fk = STATE.progress.playerFaction;
@@ -566,6 +575,66 @@ const obstacleObjects = new Map();
 let fxObjects = [];
 let toonGradientTex = null;
 let nextId = 1;
+
+// ── PROJECTILE MESH POOL (Pass-B) ──────────────────────────────────────
+// Building a Three.js mesh per shot causes a small alloc + GC pressure.
+// During firefights with miniguns/chainguns this matters. Pool keeps a
+// stash per kind; spawn pulls from stash; despawn returns it (sets
+// invisible + parks at origin).
+const PROJ_POOL = {};   // kind -> [mesh, mesh, ...]
+const PROJ_POOL_CAP = 64;   // per-kind soft cap; beyond this we just GC
+function makeProjMesh(kind){
+  let m;
+  if (kind === 'bullet' || kind === 'tracer') {
+    m = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.55, 6), basicMat(0xfff088));
+    m.rotation.x = Math.PI/2;
+  } else if (kind === 'shell') {
+    m = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.10, 0.40, 8), basicMat(0xc8b0a0));
+    m.rotation.x = Math.PI/2;
+  } else if (kind === 'mortar_shell') m = new THREE.Mesh(new THREE.SphereGeometry(0.20, 10, 8), toonMat(0x3a2a20));
+  else if (kind === 'rocket') {
+    m = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.4, 8), toonMat(0x202020));
+    body.rotation.x = Math.PI/2; m.add(body);
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 8), toonMat(0xc44a2a));
+    tip.rotation.x = Math.PI/2; tip.position.z = 0.28; m.add(tip);
+  } else if (kind === 'hex') m = new THREE.Mesh(new THREE.SphereGeometry(0.28, 14, 10), basicMat(0xff2040));
+  else if (kind === 'grenade') m = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), toonMat(0x303030));
+  else if (kind === 'flak') m = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), basicMat(0xffcc44));
+  else m = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 5), basicMat(0xffffff));
+  m.userData._projKind = kind;
+  return m;
+}
+function acquireProjMesh(kind){
+  const pool = PROJ_POOL[kind] || (PROJ_POOL[kind] = []);
+  if (pool.length > 0) {
+    const m = pool.pop();
+    m.visible = true;
+    return m;
+  }
+  return makeProjMesh(kind);
+}
+function releaseProjMesh(kind, mesh){
+  if (!mesh) return;
+  if (mesh.parent) mesh.parent.remove(mesh);
+  const pool = PROJ_POOL[kind] || (PROJ_POOL[kind] = []);
+  if (pool.length >= PROJ_POOL_CAP) {
+    // Pool full — actually destroy
+    disposeObject3D(mesh);
+    return;
+  }
+  mesh.visible = false;
+  mesh.position.set(0, -100, 0);
+  pool.push(mesh);
+}
+// Drain pool on match clear so we don't leak GPU resources between matches
+function clearProjPool(){
+  for (const k of Object.keys(PROJ_POOL)) {
+    for (const m of PROJ_POOL[k]) disposeObject3D(m);
+    PROJ_POOL[k] = [];
+  }
+}
+
 
 function makeToonGradient(){
   // 6-band gradient — much richer color depth than 4 hard bands
@@ -2294,6 +2363,7 @@ function clearBattle(){
   STATE.craters = [];
   unitObjects.forEach(m => removeAndDispose(m)); unitObjects.clear();
   projObjects.forEach(m => removeAndDispose(m)); projObjects.clear();
+  clearProjPool();   // Pass-B: drain mesh pool between matches
   towerObjects.forEach(m => removeAndDispose(m)); towerObjects.clear();
   for (const f of fxObjects) if (f.mesh) removeAndDispose(f.mesh);
   fxObjects = [];
@@ -2880,7 +2950,14 @@ function syncMeshes(dt){
       continue;
     }
     const yT = u.def.type === 'air' ? 3.8 : 0;
-    mesh.position.set(u.x, yT, u.z);
+    // Pass-B: smooth visual position lerp.
+    // Logic ticks at variable intervals (especially during heavy combat),
+    // causing micro-jitter. visualX/Z lerps toward authoritative x/z.
+    if (u.visualX == null) { u.visualX = u.x; u.visualZ = u.z; }
+    const lerpT = Math.min(1, dt * 18);    // ~90% caught up in 1 frame
+    u.visualX += (u.x - u.visualX) * lerpT;
+    u.visualZ += (u.z - u.visualZ) * lerpT;
+    mesh.position.set(u.visualX, yT, u.visualZ);
     if (u.spawnAnim > 0) {
       const s = 1 - u.spawnAnim;
       mesh.scale.setScalar(Math.max(0.1, s));
@@ -3085,28 +3162,12 @@ function syncMeshes(dt){
       setTimeout(() => { if (STATE.matchId !== mid || !STATE.running) return; endMatch(t.side !== 'player'); }, 800);
     }
   }
-  // ── Projectiles
+  // ── Projectiles (Pass-B: pooled, no per-shot allocation)
   for (const p of STATE.projectiles) {
     if (!projObjects.has(p.id)) {
-      let m;
-      if (p.kind === 'bullet' || p.kind === 'tracer') {
-        m = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.55, 6), basicMat(0xfff088));
-        m.rotation.x = Math.PI/2;
-      } else if (p.kind === 'shell') {
-        m = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.10, 0.40, 8), basicMat(0xc8b0a0));
-        m.rotation.x = Math.PI/2;
-      } else if (p.kind === 'mortar_shell') m = new THREE.Mesh(new THREE.SphereGeometry(0.20, 10, 8), toonMat(0x3a2a20));
-      else if (p.kind === 'rocket') {
-        m = new THREE.Group();
-        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.4, 8), toonMat(0x202020));
-        body.rotation.x = Math.PI/2; m.add(body);
-        const tip = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 8), toonMat(0xc44a2a));
-        tip.rotation.x = Math.PI/2; tip.position.z = 0.28; m.add(tip);
-      } else if (p.kind === 'hex') m = new THREE.Mesh(new THREE.SphereGeometry(0.28, 14, 10), basicMat(0xff2040));
-      else if (p.kind === 'grenade') m = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), toonMat(0x303030));
-      else if (p.kind === 'flak') m = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), basicMat(0xffcc44));
-      else m = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 5), basicMat(0xffffff));
-      scene.add(m); projObjects.set(p.id, m);
+      const m = acquireProjMesh(p.kind);
+      scene.add(m);
+      projObjects.set(p.id, m);
     }
     const mesh = projObjects.get(p.id);
     mesh.position.set(p.x, p.y, p.z);
@@ -3114,7 +3175,7 @@ function syncMeshes(dt){
   }
   for (const p of STATE.projectiles.filter(x => !x.alive)) {
     const m = projObjects.get(p.id);
-    if (m) { removeAndDispose(m); projObjects.delete(p.id); }
+    if (m) { releaseProjMesh(p.kind, m); projObjects.delete(p.id); }
   }
   STATE.projectiles = STATE.projectiles.filter(p => p.alive);
   // ── Trees fall
@@ -3291,14 +3352,8 @@ function update(dt) {
   STATE.enemyEnergy = Math.min(STATE.maxEnergy, STATE.enemyEnergy + STATE.energyRate * mul * dt * eFM.energyMul);
   STATE.timer -= dt;
   // Cooldowns
-  if (STATE.cardCooldowns) {
-    let any = false;
-    for (const k of Object.keys(STATE.cardCooldowns)) {
-      STATE.cardCooldowns[k] -= dt;
-      if (STATE.cardCooldowns[k] <= 0) { delete STATE.cardCooldowns[k]; any = true; }
-    }
-    if (any) renderHand();
-  }
+  // Pass-B: card cooldowns deprecated — hand rotation IS the cooldown.
+  // Enemy AI still uses cooldowns since their hand model is different.
   if (STATE.enemyCooldowns) for (const k of Object.keys(STATE.enemyCooldowns)) {
     STATE.enemyCooldowns[k] -= dt;
     if (STATE.enemyCooldowns[k] <= 0) delete STATE.enemyCooldowns[k];
@@ -3702,8 +3757,7 @@ function fireUnitAbility() {
 }
 
 function attemptDeploy(key, x, z) {
-  const cd = STATE.cardCooldowns || {};
-  if (cd[key] && cd[key] > 0) { showToast('CARD ON COOLDOWN'); playSound('ui_click'); return; }
+  // Pass-B: rotating hand replaces per-card cooldowns
   if (POWERS[key]) {
     if (triggerPower(key, x, z)) { cycleHandSlot(key); STATE.selectedCard = null; renderHand(); updateHUD(); }
     return;
@@ -3723,12 +3777,19 @@ function attemptDeploy(key, x, z) {
   STATE.selectedCard = null;
   renderHand(); updateHUD();
 }
+// Pass-B rotating hand: a played card slides to the back of deckQueue,
+// next card from the front of the queue rotates into the freed slot.
 function cycleHandSlot(key) {
-  if (!STATE.cardCooldowns) STATE.cardCooldowns = {};
-  const def = UNITS[key] || POWERS[key];
-  let cd = 2.5;
-  if (def) { if (POWERS[key]) cd = 8; else if (def.cost >= 7) cd = 6; else if (def.cost >= 6) cd = 5; else if (def.cost >= 5) cd = 4; else if (def.cost >= 4) cd = 3; else cd = 2; }
-  STATE.cardCooldowns[key] = cd;
+  if (!STATE.handSlots || !STATE.deckQueue) return;
+  const idx = STATE.handSlots.indexOf(key);
+  if (idx < 0) return;
+  if (STATE.deckQueue.length === 0) {
+    // Single-card deck edge case — just keep the card in slot
+    return;
+  }
+  const next = STATE.deckQueue.shift();
+  STATE.handSlots[idx] = next;
+  STATE.deckQueue.push(key);
 }
 
 // ── PASSIVES ───────────────────────────────────────────────────────────
@@ -3829,10 +3890,10 @@ function updateHUD() {
   if (eHQ) document.getElementById('eHQFill').style.width = (eHQ.hp / eHQ.maxHp * 100) + '%';
   const kc = document.getElementById('killCounter');
   if (kc) kc.textContent = '☠ ' + STATE.stats.kills;
-  const fk = STATE.progress.playerFaction;
-  const deck = (STATE.progress.decks[fk] || []).slice(0, 10);
-  document.querySelectorAll('.hand-card').forEach((el, i) => {
-    const k = deck[i]; if (!k) return;
+  // Pass-B: read from rotating handSlots (4 visible cards)
+  const slots = STATE.handSlots || [];
+  document.querySelectorAll('#hand .hand-card:not(.next-up)').forEach((el, i) => {
+    const k = slots[i]; if (!k) return;
     const cost = UNITS[k] ? unitCost(k) : ((POWERS[k] && POWERS[k].cost) || 0);
     el.classList.toggle('affordable', STATE.energy >= cost);
     el.classList.toggle('unaffordable', STATE.energy < cost);
@@ -3882,30 +3943,48 @@ function tickAbilityHUD(){
   }
 }
 
+// Pass-B rotating hand: renders 4 visible slots + a small "next-up" preview
+// peeking at deckQueue[0]. Played card cycles to back of queue.
 function renderHand() {
   const h = document.getElementById('hand'); h.innerHTML = '';
-  const cd = STATE.cardCooldowns || {};
-  const fk = STATE.progress.playerFaction;
-  const deck = (STATE.progress.decks[fk] || []).slice(0, 10);
-  for (let i = 0; i < deck.length; i++) {
-    const k = deck[i]; if (!k) continue;
+  // Out-of-match safety: render the player's deck flat (no rotation)
+  if (!STATE.handSlots || !STATE.handSlots.length) {
+    const fk = STATE.progress.playerFaction;
+    const deck = (STATE.progress.decks[fk] || []).slice(0, 10);
+    STATE.handSlots = deck.slice(0, HAND_SIZE);
+    STATE.deckQueue = deck.slice(HAND_SIZE);
+  }
+  // ── Render the 4 hand slots ─────
+  for (let i = 0; i < STATE.handSlots.length; i++) {
+    const k = STATE.handSlots[i]; if (!k) continue;
     const def = UNITS[k] || POWERS[k]; if (!def) continue;
     const isPower = !!POWERS[k];
-    const onCD = cd[k] && cd[k] > 0;
-    const card = document.createElement('div');
-    card.className = 'hand-card' + (isPower ? ' power' : '') + (STATE.selectedCard === k ? ' selected' : '') + (onCD ? ' cooldown' : '');
-    const cdo = onCD ? `<div class="cd-overlay">${cd[k].toFixed(1)}s</div>` : '';
-    // Show faction-adjusted cost on hand cards
     const showCost = UNITS[k] ? unitCost(k) : def.cost;
-    card.innerHTML = `<div class="cost-badge">${showCost}</div><div class="icon-box">${cardIconSVG(k)}</div><div class="name">${def.name}</div>${cdo}`;
+    const affordable = STATE.energy >= showCost;
+    const card = document.createElement('div');
+    card.className = 'hand-card' + (isPower ? ' power' : '') + (STATE.selectedCard === k ? ' selected' : '') + (affordable ? ' affordable' : ' unaffordable');
+    card.innerHTML = `<div class="cost-badge">${showCost}</div><div class="icon-box">${cardIconSVG(k)}</div><div class="name">${def.name}</div>`;
     card.onclick = () => {
-      if (onCD) { showToast('COOLDOWN'); playSound('ui_click'); return; }
       const _c = UNITS[k] ? unitCost(k) : def.cost;
       if (STATE.energy < _c) { showToast('NOT ENOUGH ENERGY'); playSound('ui_click'); return; }
       STATE.selectedCard = STATE.selectedCard === k ? null : k;
       playSound('ui_select'); renderHand();
     };
     h.appendChild(card);
+  }
+  // ── "Next up" preview slot — smaller, faded ─────
+  if (STATE.deckQueue && STATE.deckQueue.length > 0) {
+    const nk = STATE.deckQueue[0];
+    const ndef = UNITS[nk] || POWERS[nk];
+    if (ndef) {
+      const isPower = !!POWERS[nk];
+      const showCost = UNITS[nk] ? unitCost(nk) : ndef.cost;
+      const next = document.createElement('div');
+      next.className = 'hand-card next-up' + (isPower ? ' power' : '');
+      next.style.cssText = 'flex:0 0 auto;width:42px;min-width:42px;opacity:0.55;filter:saturate(0.7);transform:scale(0.85);cursor:default;';
+      next.innerHTML = `<div class="cost-badge" style="width:18px;height:18px;font-size:10px">${showCost}</div><div class="icon-box">${cardIconSVG(nk)}</div><div class="name" style="font-size:7px">NEXT</div>`;
+      h.appendChild(next);
+    }
   }
   updateHUD();
 }
@@ -4119,8 +4198,14 @@ function startMatch(mission) {
   normalizeDeck();
   const fk = STATE.progress.playerFaction;
   const pDeck = [...(STATE.progress.decks[fk] || [])];
-  STATE.hand = pDeck;
-  STATE.cardCooldowns = {};
+  // Pass-B rotating hand: 4 visible slots. Rest live in a queue.
+  // Played card slides back of queue; next-up rotates into the played slot.
+  // No more per-card cooldowns — hand rotation IS the cooldown.
+  shuffleArray(pDeck);
+  STATE.handSlots = pDeck.slice(0, HAND_SIZE);
+  STATE.deckQueue = pDeck.slice(HAND_SIZE);
+  STATE.cardCooldowns = {};   // legacy, kept for safe access
+  STATE.hand = STATE.handSlots;  // alias for legacy reads
   const eFK = mission.enemyFaction;
   const eRoles = ['swarm','scout','rifleman','sniper','heavygunner','flamer','grenadier','lightV','apc','tank','artillery','aa','medic','gunship','commander'];
   const eDeck = eRoles.map(r => eFK + '_' + r);
