@@ -501,6 +501,7 @@ function worldToCell(x, z){
 }
 
 function resizeThree(){
+  if (STATE.render2D) { resize2D(); return; }
   const cont = document.getElementById('threeContainer');
   if (!cont || !renderer || !camera) return;
   const w = cont.clientWidth, h = cont.clientHeight;
@@ -1695,6 +1696,14 @@ const PERSISTENT_DECALS = [];   // blood pools / bones / corpses (kept across ro
 
 function spawnBloodSplatter(x, z, intensity){
   intensity = intensity || 1;
+  if (STATE.render2D) {
+    for (let i = 0; i < 4 * intensity; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * 0.4;
+      add2DBloodStain(x + Math.cos(a) * r, z + Math.sin(a) * r, 2 + Math.random() * 2);
+    }
+    return;
+  }
   for (let i = 0; i < 6 * intensity; i++) {
     const a = Math.random() * Math.PI * 2;
     const drop = new THREE.Mesh(new THREE.SphereGeometry(0.04 + Math.random()*0.04, 5, 4),
@@ -1707,6 +1716,7 @@ function spawnBloodSplatter(x, z, intensity){
 }
 function spawnBloodPool(x, z, size){
   size = size || 0.55;
+  if (STATE.render2D) { add2DBloodStain(x, z, size * 16); return; }
   const pool = new THREE.Mesh(
     new THREE.CircleGeometry(size, 14),
     basicMat(0x500804, { transparent:true, opacity:0.85, depthWrite:false }));
@@ -1718,6 +1728,7 @@ function spawnBloodPool(x, z, size){
 }
 function spawnBloodStain(x, z, size){
   size = size || 0.18;
+  if (STATE.render2D) { add2DBloodStain(x, z, size * 14); return; }
   const stain = new THREE.Mesh(
     new THREE.CircleGeometry(size, 8),
     basicMat(0x300604, { transparent:true, opacity:0.65, depthWrite:false }));
@@ -1727,6 +1738,7 @@ function spawnBloodStain(x, z, size){
   PERSISTENT_DECALS.push(stain);
 }
 function spawnCorpse(unit){
+  if (STATE.render2D) { add2DBloodStain(unit.x, unit.z, 12); return; }
   // Build a simplified static corpse mesh — body sprawled flat
   const c = new THREE.Group();
   const cls = unit.def.class;
@@ -2397,7 +2409,7 @@ function goCodex(){
 // =========================================================================
 // SCREEN / NAV
 // =========================================================================
-function switchScreen(id){ document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+function switchScreen(id){ document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); document.getElementById(id).classList.add('active'); if (STATE.render2D) requestAnimationFrame(() => resize2D()); else requestAnimationFrame(() => resizeThree()); }
 function goTitle(){ STATE.running = false; switchScreen('titleScreen'); playSound('click'); }
 function pauseGame(){ STATE.paused = true; document.getElementById('pauseMenu').classList.add('active'); playSound('click'); }
 function resumeGame(){ STATE.paused = false; STATE.lastTime = 0; document.getElementById('pauseMenu').classList.remove('active'); playSound('click'); }
@@ -2457,7 +2469,7 @@ function loop(ts){
   requestAnimationFrame(loop);
   if (!STATE.running) return;
   if (!renderer || !scene || !camera) return;
-  ensureCanvasSize();
+  if (!STATE.render2D) ensureCanvasSize();
   if (!STATE.lastTime) STATE.lastTime = ts;
   const dt = Math.min(0.05, (ts - STATE.lastTime) / 1000);
   STATE.lastTime = ts;
@@ -2479,67 +2491,84 @@ function loop(ts){
     }
     tickFX(dt);
     tickGore(dt);
-    // Animate flames / motes / camera idle
-    if (scene.userData.torches) {
-      for (const t of scene.userData.torches) {
-        if (t.userData.flame) { t.userData.flame.scale.y = 1.4 + Math.sin(performance.now() * 0.008) * 0.3; t.userData.flame.material.opacity = 0.85 + Math.sin(performance.now() * 0.012) * 0.1; }
-        if (t.userData.halo) t.userData.halo.scale.setScalar(1 + Math.sin(performance.now() * 0.005) * 0.15);
+    if (!STATE.render2D) {
+      // Animate flames / motes / camera idle
+      if (scene.userData.torches) {
+        for (const t of scene.userData.torches) {
+          if (t.userData.flame) { t.userData.flame.scale.y = 1.4 + Math.sin(performance.now() * 0.008) * 0.3; t.userData.flame.material.opacity = 0.85 + Math.sin(performance.now() * 0.012) * 0.1; }
+          if (t.userData.halo) t.userData.halo.scale.setScalar(1 + Math.sin(performance.now() * 0.005) * 0.15);
+        }
       }
-    }
-    if (scene.userData.motes) {
-      for (const m of scene.userData.motes) {
-        m.userData.bob += dt * m.userData.bobSpeed;
-        m.position.y += Math.sin(m.userData.bob) * dt * 0.4;
-        m.position.x += Math.cos(m.userData.bob * 0.7) * dt * 0.1;
+      if (scene.userData.motes) {
+        for (const m of scene.userData.motes) {
+          m.userData.bob += dt * m.userData.bobSpeed;
+          m.position.y += Math.sin(m.userData.bob) * dt * 0.4;
+          m.position.x += Math.cos(m.userData.bob * 0.7) * dt * 0.1;
+        }
       }
+      // Subtle camera bob
+      const t = performance.now() * 0.0003;
+      camera.position.x = Math.sin(t) * 0.6;
+      camera.lookAt(0, 0, 0);
     }
-    // Subtle camera bob
-    const t = performance.now() * 0.0003;
-    camera.position.x = Math.sin(t) * 0.6;
-    camera.lookAt(0, 0, 0);
   }
-  // Camera shake
-  if (STATE.shake.t > 0) {
-    STATE.shake.t -= dt;
-    const m = STATE.shake.mag * (STATE.shake.t > 0 ? 1 : 0);
-    camera.position.x += (Math.random()-0.5) * m;
-    camera.position.z += (Math.random()-0.5) * m;
+  if (!STATE.render2D) {
+    // Camera shake
+    if (STATE.shake.t > 0) {
+      STATE.shake.t -= dt;
+      const m = STATE.shake.mag * (STATE.shake.t > 0 ? 1 : 0);
+      camera.position.x += (Math.random()-0.5) * m;
+      camera.position.z += (Math.random()-0.5) * m;
+    }
+    renderer.render(scene, camera);
+  } else {
+    render2DFrame();
   }
-  renderer.render(scene, camera);
 }
 
 // =========================================================================
 // BOOT
 // =========================================================================
 function bootGame(){
+  let webglOK = true;
   try { initThree(); }
   catch(e) {
-    console.error('initThree failed:', e);
-    const ls = document.getElementById('loadingScreen');
-    if (ls) {
-      ls.classList.add('active');
-      ls.innerHTML = `
-        <div style="max-width:480px;text-align:center;font-family:'Cinzel',serif;color:#fee090">
-          <div style="font-size:18px;letter-spacing:4px;margin-bottom:14px">⚠ WEBGL UNAVAILABLE</div>
-          <div style="font-family:'Caveat',cursive;font-size:18px;color:#c89858;margin-bottom:14px;letter-spacing:1px">${(e.message||'Unknown error')}</div>
-          <div style="font-family:'Crimson Pro',serif;font-size:13px;color:#c89858;line-height:1.6;text-align:left;background:rgba(0,0,0,0.4);padding:14px;border-radius:6px;border:1px solid #604018">
-            <div style="margin-bottom:8px;font-weight:700;color:#e8b848">Try one of these:</div>
-            <div style="margin-bottom:6px">• <b>Hard refresh</b> the page (Ctrl+Shift+R / Cmd+Shift+R)</div>
-            <div style="margin-bottom:6px">• If you're in a <b>social-app browser</b> (Twitter, FB, LinkedIn, Slack), tap the menu → "Open in Safari/Chrome"</div>
-            <div style="margin-bottom:6px">• Enable <b>Hardware Acceleration</b> in browser Settings</div>
-            <div style="margin-bottom:6px">• Try a <b>different browser</b> — Chrome or Firefox on desktop are most reliable</div>
-            <div style="margin-bottom:6px">• If on mobile, try Safari (iOS) or Chrome (Android)</div>
-            <div style="margin-top:10px;font-size:11px;color:#806840">If none of these work, your device/browser combo doesn't support WebGL.</div>
-          </div>
-        </div>
-      `;
+    console.warn('initThree failed, falling back to 2D canvas:', e.message);
+    webglOK = false;
+    try { init2DCanvas(); }
+    catch(e2) {
+      console.error('init2DCanvas also failed:', e2);
+      const ls = document.getElementById('loadingScreen');
+      if (ls) {
+        ls.classList.add('active');
+        ls.innerHTML = `
+          <div style="max-width:480px;text-align:center;font-family:'Cinzel',serif;color:#fee090">
+            <div style="font-size:18px;letter-spacing:4px;margin-bottom:14px">⚠ RENDER FAILED</div>
+            <div style="font-family:'Caveat',cursive;font-size:18px;color:#c89858;margin-bottom:14px;letter-spacing:1px">${(e2.message||e.message||'Unknown')}</div>
+          </div>`;
+      }
+      return;
     }
-    return;
   }
   setupInput();
+  if (!webglOK) setup2DInput();
   goTitle();
   document.getElementById('loadingScreen').classList.remove('active');
+  if (!webglOK) {
+    // Banner so the user knows 2D mode is active
+    const banner = document.createElement('div');
+    banner.style.cssText = 'position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(20,12,6,0.85);border:1px solid #604018;color:#c89858;font-family:Cinzel,serif;font-size:10px;letter-spacing:2px;padding:4px 12px;border-radius:4px';
+    banner.textContent = '2D MODE — WEBGL UNAVAILABLE';
+    document.body.appendChild(banner);
+  }
 }
+// =========================================================================
+// 2D CANVAS FALLBACK state (declared before bootGame may run)
+// =========================================================================
+var _2dCanvas = null, _2dCtx = null;
+var _2dW = 0, _2dH = 0;
+var _2dBloodStains = [];   // persistent dots {x,z,r,color}
+
 if (window.__threeLoaded) bootGame();
 else window.addEventListener('three-ready', bootGame);
 
@@ -2555,3 +2584,353 @@ window.rerollShop = rerollShop;
 window.buyXP = buyXP;
 window.readyForCombat = readyForCombat;
 window.sellSelected = sellSelected;
+function init2DCanvas(){
+  STATE.render2D = true;
+  const container = document.getElementById('threeContainer');
+  container.innerHTML = '';
+  _2dCanvas = document.createElement('canvas');
+  _2dCanvas.style.width = '100%'; _2dCanvas.style.height = '100%'; _2dCanvas.style.display = 'block';
+  container.appendChild(_2dCanvas);
+  _2dCtx = _2dCanvas.getContext('2d');
+  // Make scene/camera/renderer no-op stubs so the rest of the code doesn't crash
+  scene = { add:()=>{}, remove:()=>{}, userData:{}, fog:null, background:null, children:[] };
+  camera = { position:{set:()=>{},x:0,y:0,z:0}, lookAt:()=>{}, aspect:1, fov:40, updateProjectionMatrix:()=>{} };
+  renderer = { setSize:()=>{}, setPixelRatio:()=>{}, render:()=>{}, domElement:_2dCanvas, shadowMap:{}, outputEncoding:0, toneMapping:0 };
+  // Stub the raycaster pointer
+  raycaster = { setFromCamera:()=>{}, ray:{ intersectPlane:(p, hit) => { hit.x = 0; hit.y = 0; hit.z = 0; return hit; } } };
+  pointer = { x:0, y:0 };
+  // Resize listener for 2D
+  resize2D();
+  window.addEventListener('resize', resize2D);
+}
+function resize2D(){
+  if (!_2dCanvas) return;
+  const container = document.getElementById('threeContainer');
+  const w = container.clientWidth, h = container.clientHeight;
+  if (!w || !h) return;
+  const dpr = Math.min(window.devicePixelRatio||1, 2);
+  _2dCanvas.width = w * dpr; _2dCanvas.height = h * dpr;
+  _2dW = w; _2dH = h;
+  _2dCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+// Convert board cell (row, col) to screen pixel center
+function cellToScreen(row, col){
+  if (!_2dW) return { x:0, y:0 };
+  // Board is centered horizontally, vertically shifted up
+  const boardW = Math.min(_2dW * 0.85, 540);
+  const boardH = boardW * (ROWS / COLS);
+  const cs = boardW / COLS;
+  const x0 = _2dW/2 - boardW/2;
+  const y0 = _2dH * 0.10;
+  return { x: x0 + (col + 0.5) * cs, y: y0 + (row + 0.5) * cs, cs };
+}
+function screenToCell(px, py){
+  const boardW = Math.min(_2dW * 0.85, 540);
+  const cs = boardW / COLS;
+  const x0 = _2dW/2 - boardW/2;
+  const y0 = _2dH * 0.10;
+  const col = Math.floor((px - x0) / cs);
+  const row = Math.floor((py - y0) / cs);
+  if (row < 0 || row >= ROWS || col < 0 || col >= COLS) return null;
+  return { row, col };
+}
+// World→Screen for combat units (they use x,z world coords)
+function worldToScreen(x, z){
+  // Board world spans BOARD_W × BOARD_D; map to same screen rect
+  const boardW = Math.min(_2dW * 0.85, 540);
+  const boardH = boardW * (ROWS / COLS);
+  const x0 = _2dW/2 - boardW/2;
+  const y0 = _2dH * 0.10;
+  return {
+    x: x0 + ((x + BOARD_W/2) / BOARD_W) * boardW,
+    y: y0 + ((z + BOARD_D/2) / BOARD_D) * boardH,
+  };
+}
+
+function render2DFrame(){
+  if (!_2dCtx) return;
+  const ctx = _2dCtx;
+  ctx.clearRect(0, 0, _2dW, _2dH);
+  // Painted backdrop — radial gradient
+  const g = ctx.createRadialGradient(_2dW/2, _2dH*0.4, 50, _2dW/2, _2dH*0.5, _2dH*0.8);
+  g.addColorStop(0, '#3a2a18');
+  g.addColorStop(0.6, '#1a1008');
+  g.addColorStop(1, '#0a0604');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, _2dW, _2dH);
+  // Drifting "mote" highlights (cheap atmosphere)
+  ctx.fillStyle = 'rgba(255,220,160,0.10)';
+  const t = performance.now() * 0.001;
+  for (let i = 0; i < 12; i++) {
+    const mx = (Math.sin(t * 0.3 + i) * 0.5 + 0.5) * _2dW;
+    const my = (Math.cos(t * 0.4 + i * 1.3) * 0.5 + 0.5) * _2dH;
+    ctx.beginPath();
+    ctx.arc(mx, my, 1.5 + Math.sin(t + i) * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  drawBoard2D();
+  // Persistent blood stains rendered first (under units)
+  for (const s of _2dBloodStains) {
+    const p = worldToScreen(s.x, s.z);
+    ctx.fillStyle = s.color || 'rgba(80,8,4,0.85)';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Draw units
+  if (STATE.phase === 'combat') {
+    // Combat units
+    for (const u of STATE.combatUnits) {
+      if (!u || u.isTotem) continue;
+      drawUnit2D(u);
+    }
+    // Totems
+    for (const t of STATE.combatUnits) if (t && t.isTotem) drawTotem2D(t);
+  } else {
+    // Shop phase — show placed units + enemy preview
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const u = STATE.board[r] && STATE.board[r][c];
+        if (u) drawUnit2D(u, true);
+        const e = STATE.enemyBoard && STATE.enemyBoard[r] && STATE.enemyBoard[r][c];
+        if (e) drawUnit2D(e, true);
+      }
+    }
+  }
+  // FX
+  for (const fx of STATE.fxObjects) {
+    if (fx.type === 'projectile') {
+      const p = fx.proj;
+      const s = worldToScreen(p.x, p.z);
+      ctx.fillStyle = '#' + (p.color || 0xfff088).toString(16).padStart(6, '0');
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#' + (p.color || 0xfff088).toString(16).padStart(6, '0') + '60';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (fx.type === 'castFlash' || fx.type === 'impact' || fx.type === 'shadowStrike' || fx.type === 'fire' || fx.type === 'soulrend') {
+      const s = worldToScreen(fx.x, fx.z);
+      const r = (1 - (fx.t||0)/fx.dur) * 40;
+      const col = '#' + (fx.color || 0xffe888).toString(16).padStart(6, '0');
+      ctx.fillStyle = col + 'aa';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, Math.max(0, r), 0, Math.PI * 2);
+      ctx.fill();
+    } else if (fx.type === 'fireball' || fx.type === 'nova' || fx.type === 'aura' || fx.type === 'roar' || fx.type === 'buffSelf' || fx.type === 'summon') {
+      const s = worldToScreen(fx.x, fx.z);
+      const r = ((fx.t||0)/fx.dur) * 60;
+      ctx.strokeStyle = '#' + (fx.color || 0xff8040).toString(16).padStart(6, '0');
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, Math.max(2, r), 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (fx.type === 'slash') {
+      const s = worldToScreen(fx.x, fx.z);
+      ctx.strokeStyle = '#' + (fx.color || 0xfff088).toString(16).padStart(6, '0');
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 20, 0, Math.PI * 0.7);
+      ctx.stroke();
+    } else if (fx.type === 'heal') {
+      const s = worldToScreen(fx.x, fx.z);
+      ctx.fillStyle = '#80ff88';
+      for (let i = 0; i < 4; i++) {
+        const ang = (i/4) * Math.PI * 2 + (fx.t||0) * 4;
+        ctx.beginPath();
+        ctx.arc(s.x + Math.cos(ang) * 18, s.y + Math.sin(ang) * 18 - (fx.t||0) * 30, 3, 0, Math.PI*2);
+        ctx.fill();
+      }
+    } else if (fx.type === 'stun') {
+      const s = worldToScreen(fx.x, fx.z);
+      ctx.fillStyle = '#ffe888';
+      ctx.font = 'bold 16px Cinzel, serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('✦', s.x, s.y - 30);
+    } else if (fx.type === 'shield') {
+      const s = worldToScreen(fx.x, fx.z);
+      ctx.strokeStyle = '#80c0ff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 22, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (fx.type === 'chunk' || fx.type === 'blooddrop') {
+      // 3D mesh approach — skip in 2D
+    } else if (fx.type === 'death') {
+      const s = worldToScreen(fx.x, fx.z);
+      const r = ((fx.t||0)/fx.dur) * 40;
+      ctx.fillStyle = 'rgba(160,32,16,0.7)';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, Math.max(2, r), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+function drawBoard2D(){
+  const ctx = _2dCtx;
+  const boardW = Math.min(_2dW * 0.85, 540);
+  const boardH = boardW * (ROWS / COLS);
+  const x0 = _2dW/2 - boardW/2;
+  const y0 = _2dH * 0.10;
+  const cs = boardW / COLS;
+  // Wooden frame
+  ctx.fillStyle = '#4a2810';
+  ctx.fillRect(x0 - 10, y0 - 10, boardW + 20, boardH + 20);
+  // Gold trim
+  ctx.strokeStyle = '#a07840'; ctx.lineWidth = 3;
+  ctx.strokeRect(x0 - 8, y0 - 8, boardW + 16, boardH + 16);
+  // Inner board
+  ctx.fillStyle = '#8a5818';
+  ctx.fillRect(x0, y0, boardW, boardH);
+  // Side tints
+  ctx.fillStyle = 'rgba(96,160,255,0.10)';
+  ctx.fillRect(x0, y0 + boardH/2, boardW, boardH/2);
+  ctx.fillStyle = 'rgba(255,80,96,0.10)';
+  ctx.fillRect(x0, y0, boardW, boardH/2);
+  // Grid lines
+  ctx.strokeStyle = '#604018'; ctx.lineWidth = 1;
+  for (let r = 0; r <= ROWS; r++) {
+    ctx.beginPath(); ctx.moveTo(x0, y0 + r*cs); ctx.lineTo(x0 + boardW, y0 + r*cs); ctx.stroke();
+  }
+  for (let c = 0; c <= COLS; c++) {
+    ctx.beginPath(); ctx.moveTo(x0 + c*cs, y0); ctx.lineTo(x0 + c*cs, y0 + boardH); ctx.stroke();
+  }
+  // Selection highlight
+  if (STATE.phase === 'shop' && STATE.selectedBench != null) {
+    // Highlight all valid player tiles
+    ctx.fillStyle = 'rgba(254,224,144,0.18)';
+    for (let r = PLAYER_ROW_MIN; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        ctx.fillRect(x0 + c*cs + 2, y0 + r*cs + 2, cs - 4, cs - 4);
+      }
+    }
+  }
+  if (STATE.selectedBoard) {
+    const r = STATE.selectedBoard.row, c = STATE.selectedBoard.col;
+    ctx.strokeStyle = '#fee090'; ctx.lineWidth = 3;
+    ctx.strokeRect(x0 + c*cs + 2, y0 + r*cs + 2, cs - 4, cs - 4);
+  }
+}
+function drawUnit2D(u, isShop){
+  if (!u || u.hp <= 0) return;
+  const ctx = _2dCtx;
+  let p;
+  if (isShop) p = cellToScreen(u.row, u.col);
+  else p = worldToScreen(u.x, u.z);
+  const radius = u.def.tier >= 4 ? 22 : 18;
+  // Side ring (under)
+  ctx.fillStyle = u.side === 'player' ? 'rgba(96,160,255,0.35)' : 'rgba(255,80,96,0.35)';
+  ctx.beginPath(); ctx.arc(p.x, p.y + 4, radius + 4, 0, Math.PI * 2); ctx.fill();
+  // Origin-colored body
+  const origin = ORIGINS[u.def.origin];
+  const cls = CLASSES[u.def.class];
+  // Body circle (origin color)
+  ctx.fillStyle = '#' + origin.color.toString(16).padStart(6, '0');
+  ctx.strokeStyle = '#0a0604'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(p.x, p.y, radius, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // Class-color inner ring
+  ctx.strokeStyle = '#' + cls.color.toString(16).padStart(6, '0');
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(p.x, p.y, radius - 3, 0, Math.PI * 2); ctx.stroke();
+  // Letter (class)
+  ctx.fillStyle = '#0a0604';
+  ctx.font = 'bold ' + (radius * 0.9) + 'px Cinzel, serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const letter = cls.name.charAt(0);
+  ctx.fillText(letter, p.x, p.y);
+  // Selection highlight
+  if (STATE.selectedBoard && isShop && STATE.selectedBoard.row === u.row && STATE.selectedBoard.col === u.col) {
+    ctx.strokeStyle = '#fee090';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(p.x, p.y, radius + 5, 0, Math.PI * 2); ctx.stroke();
+  }
+  // Star indicators
+  if (u.stars > 1) {
+    ctx.fillStyle = u.stars === 3 ? '#ffe040' : '#c0c0c0';
+    ctx.font = 'bold 10px Cinzel, serif';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('★'.repeat(u.stars), p.x, p.y - radius - 4);
+  }
+  // HP bar (in combat or always show in 2D)
+  if (u.hp < u.maxHp || !isShop) {
+    const barW = radius * 2;
+    const hpRatio = Math.max(0, u.hp / u.maxHp);
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(p.x - barW/2, p.y + radius + 4, barW, 4);
+    ctx.fillStyle = hpRatio > 0.6 ? '#40e860' : hpRatio > 0.3 ? '#fce040' : '#e83030';
+    ctx.fillRect(p.x - barW/2, p.y + radius + 4, barW * hpRatio, 4);
+  }
+  // Mana bar
+  if (u.manaMax > 0 && !isShop) {
+    const barW = radius * 2;
+    const mRatio = Math.min(1, u.mana / u.manaMax);
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(p.x - barW/2, p.y + radius + 10, barW, 3);
+    ctx.fillStyle = '#60a0ff';
+    ctx.fillRect(p.x - barW/2, p.y + radius + 10, barW * mRatio, 3);
+  }
+}
+function drawTotem2D(t){
+  const ctx = _2dCtx;
+  const p = worldToScreen(t.x, t.z);
+  ctx.fillStyle = '#4a2810';
+  ctx.fillRect(p.x - 6, p.y - 10, 12, 20);
+  ctx.fillStyle = '#80ffa0';
+  ctx.beginPath(); ctx.arc(p.x, p.y - 12, 6, 0, Math.PI * 2); ctx.fill();
+}
+
+// 2D-mode blood: stains are added by applyDamage / onUnitDeath hooks.
+// We intercept those here by extending the existing functions.
+function add2DBloodStain(x, z, r){
+  _2dBloodStains.push({ x, z, r:r||4, color:'rgba(80,8,4,0.85)' });
+  if (_2dBloodStains.length > 200) _2dBloodStains.shift();
+}
+function clear2DBloodStains(){ _2dBloodStains.length = 0; }
+
+// Input handler for 2D mode — listen to clicks on the 2D canvas
+function setup2DInput(){
+  if (!_2dCanvas) return;
+  _2dCanvas.addEventListener('pointerdown', e => {
+    if (!STATE.running || STATE.phase !== 'shop') return;
+    const r = _2dCanvas.getBoundingClientRect();
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    const cell = screenToCell(px, py);
+    if (!cell) return;
+    if (STATE.selectedBench != null) {
+      placeFromBenchToBoard(cell.row, cell.col);
+    } else {
+      const u = STATE.board[cell.row] && STATE.board[cell.row][cell.col];
+      if (u) {
+        if (STATE.selectedBoard) {
+          const a = STATE.selectedBoard;
+          if (a.row !== cell.row || a.col !== cell.col) {
+            const tmp = STATE.board[cell.row][cell.col];
+            STATE.board[cell.row][cell.col] = STATE.board[a.row][a.col];
+            STATE.board[a.row][a.col] = tmp;
+            if (STATE.board[cell.row][cell.col]) { STATE.board[cell.row][cell.col].row = cell.row; STATE.board[cell.row][cell.col].col = cell.col; }
+            if (STATE.board[a.row][a.col]) { STATE.board[a.row][a.col].row = a.row; STATE.board[a.row][a.col].col = a.col; }
+          }
+          STATE.selectedBoard = null;
+          playSound('place');
+        } else {
+          STATE.selectedBoard = { row:cell.row, col:cell.col };
+          playSound('select');
+        }
+      } else if (STATE.selectedBoard && cell.row >= PLAYER_ROW_MIN) {
+        const a = STATE.selectedBoard;
+        const moved = STATE.board[a.row][a.col];
+        if (moved) {
+          STATE.board[cell.row][cell.col] = moved;
+          STATE.board[a.row][a.col] = null;
+          moved.row = cell.row; moved.col = cell.col;
+          playSound('place');
+        }
+        STATE.selectedBoard = null;
+      }
+    }
+  });
+}
+
+// Hook into the main loop: render2DFrame replaces three.js render when in 2D mode
+// (handled in the main loop check)
