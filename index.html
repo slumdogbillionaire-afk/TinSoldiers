@@ -655,16 +655,8 @@ function tryCreateRenderer(){
 
 function initThree(){
   const container = document.getElementById('threeContainer');
-  // ── Pre-flight WebGL check ──
-  // Probe with a throwaway canvas before Three.js touches anything.
-  // If the browser can't give us a context here, fail with a useful message.
-  try {
-    const probe = document.createElement('canvas');
-    const gl = probe.getContext('webgl2') || probe.getContext('webgl') || probe.getContext('experimental-webgl');
-    if (!gl) throw new Error('Browser reports no WebGL support');
-  } catch (e) {
-    throw new Error('WebGL unavailable: ' + (e.message || 'browser refused'));
-  }
+  // No pre-flight probe — it consumes a WebGL context slot and made things
+  // worse on context-limited browsers. tryCreateRenderer handles failures.
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x2a1810);
   scene.fog = new THREE.Fog(0x2a1810, 18, 50);
@@ -2889,7 +2881,24 @@ function bootGame(){
   catch(e) {
     console.error('initThree failed:', e);
     const ls = document.getElementById('loadingScreen');
-    if (ls) { ls.classList.add('active'); ls.textContent = '3D INIT FAILED: ' + (e.message||'unknown'); }
+    if (ls) {
+      ls.classList.add('active');
+      ls.innerHTML = `
+        <div style="max-width:480px;text-align:center;font-family:'Cinzel',serif;color:#fee090">
+          <div style="font-size:18px;letter-spacing:4px;margin-bottom:14px">⚠ WEBGL UNAVAILABLE</div>
+          <div style="font-family:'Caveat',cursive;font-size:18px;color:#c89858;margin-bottom:14px;letter-spacing:1px">${(e.message||'Unknown error')}</div>
+          <div style="font-family:'Crimson Pro',serif;font-size:13px;color:#c89858;line-height:1.6;text-align:left;background:rgba(0,0,0,0.4);padding:14px;border-radius:6px;border:1px solid #604018">
+            <div style="margin-bottom:8px;font-weight:700;color:#e8b848">Try one of these:</div>
+            <div style="margin-bottom:6px">• <b>Hard refresh</b> the page (Ctrl+Shift+R / Cmd+Shift+R)</div>
+            <div style="margin-bottom:6px">• If you're in a <b>social-app browser</b> (Twitter, FB, LinkedIn, Slack), tap the menu → "Open in Safari/Chrome"</div>
+            <div style="margin-bottom:6px">• Enable <b>Hardware Acceleration</b> in browser Settings</div>
+            <div style="margin-bottom:6px">• Try a <b>different browser</b> — Chrome or Firefox on desktop are most reliable</div>
+            <div style="margin-bottom:6px">• If on mobile, try Safari (iOS) or Chrome (Android)</div>
+            <div style="margin-top:10px;font-size:11px;color:#806840">If none of these work, your device/browser combo doesn't support WebGL.</div>
+          </div>
+        </div>
+      `;
+    }
     return;
   }
   setupInput();
