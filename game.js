@@ -262,15 +262,51 @@ function metalMat(c, opts){ opts=opts||{}; return new THREE.MeshStandardMaterial
 function disposeObject3D(obj){ if(!obj) return; obj.traverse(o=>{ if(o.geometry){try{o.geometry.dispose();}catch(e){}} if(o.material){const m=Array.isArray(o.material)?o.material:[o.material]; for(const x of m){try{ if(x.map) x.map.dispose(); if(x.dispose) x.dispose(); }catch(e){}} } }); }
 function removeAndDispose(mesh){ if(!mesh) return; if(mesh.parent) mesh.parent.remove(mesh); else if(scene) scene.remove(mesh); disposeObject3D(mesh); }
 
+function tryCreateRenderer(){
+  // Cascade: try preferred config, fall back progressively if WebGL context
+  // creation fails. Many integrated GPUs / older browsers fail with
+  // antialias=true or powerPreference='high-performance'.
+  const attempts = [
+    { antialias:true,  powerPreference:'high-performance', precision:'mediump', failIfMajorPerformanceCaveat:false },
+    { antialias:false, powerPreference:'high-performance', precision:'mediump', failIfMajorPerformanceCaveat:false },
+    { antialias:false, powerPreference:'default',          precision:'mediump', failIfMajorPerformanceCaveat:false },
+    { antialias:false, powerPreference:'default',          precision:'lowp',    failIfMajorPerformanceCaveat:false },
+    { antialias:false, powerPreference:'low-power',        precision:'lowp',    failIfMajorPerformanceCaveat:false },
+  ];
+  let lastErr = null;
+  for (const opts of attempts) {
+    try {
+      const r = new THREE.WebGLRenderer(opts);
+      // If we got here, success. Log which config worked so we know.
+      console.log('WebGL context created with:', JSON.stringify(opts));
+      return r;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  // All attempts failed
+  throw lastErr || new Error('WebGL not available');
+}
+
 function initThree(){
   const container = document.getElementById('threeContainer');
+  // ── Pre-flight WebGL check ──
+  // Probe with a throwaway canvas before Three.js touches anything.
+  // If the browser can't give us a context here, fail with a useful message.
+  try {
+    const probe = document.createElement('canvas');
+    const gl = probe.getContext('webgl2') || probe.getContext('webgl') || probe.getContext('experimental-webgl');
+    if (!gl) throw new Error('Browser reports no WebGL support');
+  } catch (e) {
+    throw new Error('WebGL unavailable: ' + (e.message || 'browser refused'));
+  }
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x2a1810);
   scene.fog = new THREE.Fog(0x2a1810, 18, 50);
   camera = new THREE.PerspectiveCamera(40, 1, 0.3, 200);
   camera.position.set(0, 16, 12);
   camera.lookAt(0, 0, 0);
-  renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance', precision:'mediump', failIfMajorPerformanceCaveat:false });
+  renderer = tryCreateRenderer();
   renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -296,9 +332,21 @@ function initThree(){
 
   raycaster = new THREE.Raycaster();
   pointer = new THREE.Vector2();
-  buildSkyAndBackdrop();
+  // Sky shader can fail on some GPUs — fall back to flat color
+  try { buildSkyAndBackdrop(); }
+  catch (e) { console.warn('Sky shader failed, using flat backdrop:', e.message); buildFallbackBackdrop(); }
   buildBoard();
   resizeThree();
+}
+// Fallback if ShaderMaterial fails — flat colored backdrop only
+function buildFallbackBackdrop(){
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), new THREE.MeshLambertMaterial({ color: 0x402818 }));
+  ground.rotation.x = -Math.PI/2; ground.position.y = -0.2; ground.receiveShadow = true;
+  scene.add(ground);
+  // Simple gradient via large sphere with vertex colors
+  const sphere = new THREE.Mesh(new THREE.SphereGeometry(120, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0x8a4030, side: THREE.BackSide }));
+  scene.add(sphere);
 }
 
 function buildSkyAndBackdrop(){
