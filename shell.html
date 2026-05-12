@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>TIN SOLDIERS: ATTIC WAR</title>
+<link href="https://fonts.googleapis.com/css2?family=Special+Elite&family=Bungee&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width:100%; height:100%; overflow:hidden;
+  font-family:'Inter', sans-serif; color:#e0e0e0;
+  background:#0a0a0c;
+  user-select:none; -webkit-user-select:none; touch-action:none;
+}
+#arena { position:fixed; inset:0; }
+.screen { position:fixed; inset:0; display:none; pointer-events:none; z-index:10; }
+.screen.active { display:block; }
+.screen .panel, .screen .panel-fs { pointer-events:auto; }
+
+/* Title */
+#titleScreen {
+  background:
+    radial-gradient(ellipse at top, rgba(255,200,120,0.15), transparent 60%),
+    radial-gradient(ellipse at bottom right, rgba(100,80,180,0.12), transparent 50%),
+    linear-gradient(180deg, #181018 0%, #0a0a0c 80%);
+  display:none;
+}
+#titleScreen.active { display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.title-h1 { font-family:'Bungee', sans-serif; font-size:64px; color:#f0d4a0; letter-spacing:6px; text-shadow:0 4px 0 #4a2810, 0 8px 16px rgba(0,0,0,0.7); text-align:center; line-height:0.95; pointer-events:auto; }
+.title-h2 { font-family:'Special Elite', monospace; font-size:22px; color:#c89858; letter-spacing:8px; margin-top:8px; }
+.title-tag { font-family:'Special Elite', monospace; font-size:14px; color:#a08070; margin-top:16px; max-width:560px; text-align:center; line-height:1.6; }
+.title-btns { display:flex; gap:14px; margin-top:36px; pointer-events:auto; }
+.menu-btn {
+  font-family:'Bungee', sans-serif; font-size:14px; letter-spacing:3px;
+  background:linear-gradient(180deg, #4a3018 0%, #2a1810 100%);
+  border:2px solid #806040; color:#f0d4a0;
+  padding:14px 32px; border-radius:6px; cursor:pointer;
+  box-shadow:0 4px 0 #1a0808, 0 8px 14px rgba(0,0,0,0.5);
+  transition:transform 0.06s, box-shadow 0.06s, background 0.2s;
+}
+.menu-btn:hover { background:linear-gradient(180deg, #5a3820 0%, #3a2010 100%); transform:translateY(-1px); box-shadow:0 5px 0 #1a0808, 0 10px 18px rgba(0,0,0,0.6); }
+.menu-btn:active { transform:translateY(2px); box-shadow:0 2px 0 #1a0808; }
+.menu-btn.primary { background:linear-gradient(180deg, #8a6020 0%, #5a3a10 100%); border-color:#e0a050; color:#fff0c0; }
+.menu-btn.primary:hover { background:linear-gradient(180deg, #a07028 0%, #6a4814 100%); }
+
+/* Map */
+#mapScreen { background: rgba(8,6,10,0.92); display:none; }
+#mapScreen.active { display:flex; flex-direction:column; padding:24px; }
+.map-hud { display:flex; gap:24px; align-items:center; padding:8px 16px; background:rgba(0,0,0,0.5); border:1px solid #604018; border-radius:8px; pointer-events:auto; }
+.map-hud > div { font-family:'Special Elite', monospace; font-size:13px; letter-spacing:1px; color:#c89858; }
+.map-hud .lbl { color:#806040; font-size:10px; margin-right:6px; }
+#mapRoomLabel { color:#f0d4a0; font-family:'Bungee', sans-serif; font-size:16px; letter-spacing:3px; }
+#mapSquad { display:flex; gap:4px; }
+.squad-chip { width:22px; height:22px; border-radius:50%; border:2px solid; display:flex; align-items:center; justify-content:center; font-family:'Bungee', sans-serif; font-size:11px; color:#fff; }
+.map-graph-wrap { flex:1; display:flex; align-items:center; justify-content:center; }
+#mapGraph { position:relative; width:920px; height:460px; }
+.mapnode {
+  position:absolute; width:72px; height:72px; border-radius:50%;
+  background:rgba(20,12,8,0.85); border:3px solid #604018; color:#c89858;
+  font-size:30px; display:flex; align-items:center; justify-content:center;
+  cursor:default; pointer-events:auto;
+  box-shadow:inset 0 -2px 8px rgba(0,0,0,0.5);
+}
+.mapnode.selectable { cursor:pointer; border-color:#e0a050; color:#f0d4a0; animation:pulse 1.6s infinite; }
+.mapnode.selectable:hover { transform:scale(1.08); background:#3a2810; }
+.mapnode.cleared { opacity:0.45; border-color:#608040; color:#80a060; }
+.mapnode.battle.selectable { border-color:#e0a050; }
+.mapnode.elite.selectable { border-color:#e04040; color:#ffa080; }
+.mapnode.shop.selectable { border-color:#40c0a0; color:#80f0d0; }
+.mapnode.event.selectable { border-color:#a060c0; color:#d088f0; }
+.mapnode.boss.selectable { border-color:#ff4040; color:#ffe040; font-size:36px; animation:bossPulse 1.0s infinite; }
+@keyframes pulse { 0%,100% { box-shadow:inset 0 -2px 8px rgba(0,0,0,0.5), 0 0 0 0 rgba(224,160,80,0.6); } 50% { box-shadow:inset 0 -2px 8px rgba(0,0,0,0.5), 0 0 0 8px rgba(224,160,80,0); } }
+@keyframes bossPulse { 0%,100% { transform:scale(1); box-shadow:inset 0 -2px 8px rgba(0,0,0,0.5), 0 0 16px rgba(255,64,64,0.6); } 50% { transform:scale(1.06); box-shadow:inset 0 -2px 8px rgba(0,0,0,0.5), 0 0 28px rgba(255,64,64,0.9); } }
+.map-foot { padding:8px; text-align:center; font-family:'Special Elite', monospace; font-size:11px; color:#806040; letter-spacing:2px; }
+
+/* Battle */
+#battleScreen { display:none; pointer-events:none; }
+#battleScreen.active { display:block; }
+.battle-top {
+  position:absolute; top:0; left:0; right:0; padding:10px 16px;
+  display:flex; gap:16px; align-items:center; justify-content:space-between;
+  background:linear-gradient(180deg, rgba(0,0,0,0.7), transparent);
+  pointer-events:auto;
+}
+.battle-top .group { display:flex; gap:14px; align-items:center; }
+.battle-pill {
+  font-family:'Special Elite', monospace; font-size:12px; letter-spacing:2px;
+  background:rgba(20,12,8,0.85); border:1px solid #604018;
+  padding:6px 14px; border-radius:4px; color:#c89858;
+}
+.battle-pill.hp { border-color:#a04040; color:#ff8080; }
+.battle-pill.gold { border-color:#a08040; color:#ffe080; }
+.battle-pill.wave { border-color:#4080a0; color:#80c0f0; font-family:'Bungee', sans-serif; font-size:11px; }
+#battleRoom { font-family:'Bungee', sans-serif; font-size:14px; letter-spacing:4px; color:#f0d4a0; }
+.battle-bottom {
+  position:absolute; left:0; right:0; bottom:0; padding:8px 12px 10px;
+  background:linear-gradient(0deg, rgba(0,0,0,0.85), transparent);
+  pointer-events:auto;
+}
+#squadBarLabel { font-family:'Bungee', sans-serif; font-size:10px; letter-spacing:3px; color:#a08060; margin-bottom:6px; }
+#squadBar { display:flex; gap:8px; align-items:center; overflow-x:auto; padding-bottom:4px; }
+.squad-card {
+  flex-shrink:0; width:100px; min-height:80px;
+  background:rgba(20,12,8,0.9); border:2px solid #604018; border-radius:6px;
+  padding:6px; cursor:pointer; transition:transform 0.08s;
+  text-align:center;
+}
+.squad-card:hover { transform:translateY(-2px); }
+.squad-card.selected { box-shadow:0 0 0 3px #e0a050; }
+.sc-tag { display:inline-block; width:30px; height:30px; border-radius:50%; line-height:30px; font-family:'Bungee', sans-serif; font-size:14px; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6); }
+.sc-name { font-family:'Bungee', sans-serif; font-size:11px; letter-spacing:1px; color:#f0d4a0; margin-top:2px; }
+.sc-stats { font-family:'Special Elite', monospace; font-size:9px; color:#806040; margin-top:2px; }
+.sc-ability { font-family:'Special Elite', monospace; font-size:9px; color:#80c0a0; margin-top:2px; letter-spacing:1px; }
+
+.unit-card {
+  flex-shrink:0; width:90px; height:78px; position:relative;
+  background:rgba(20,12,8,0.9); border:2px solid #604018; border-radius:6px;
+  padding:4px 6px; cursor:pointer;
+}
+.unit-card:hover { background:rgba(30,18,10,0.95); }
+.unit-card.selected { box-shadow:0 0 0 3px #80f0ff; }
+.unit-card.dead { opacity:0.4; filter:grayscale(1); }
+.uc-num { position:absolute; top:2px; left:4px; font-family:'Bungee', sans-serif; font-size:10px; color:#806040; }
+.uc-tag { width:28px; height:28px; border-radius:50%; line-height:28px; text-align:center; font-family:'Bungee', sans-serif; font-size:13px; color:#fff; margin:2px auto 0; }
+.uc-bar { width:100%; height:4px; background:#202020; border-radius:2px; margin-top:6px; overflow:hidden; }
+.uc-bar-fg { height:100%; background:linear-gradient(90deg, #40e040, #80f060); transition:width 0.15s; }
+.uc-ability { width:100%; height:14px; background:#202028; border-radius:2px; margin-top:3px; overflow:hidden; position:relative; }
+.uc-ability-fg { height:100%; background:linear-gradient(90deg, #ffe040, #ffa040); }
+.uc-ability span { position:absolute; inset:0; line-height:14px; text-align:center; font-family:'Special Elite', monospace; font-size:8px; letter-spacing:1px; color:#0a0604; }
+
+.ability-btn {
+  flex-shrink:0; padding:8px 18px;
+  font-family:'Bungee', sans-serif; font-size:12px; letter-spacing:2px;
+  background:linear-gradient(180deg, #806040 0%, #604020 100%);
+  border:2px solid #e0a050; color:#fff0c0; border-radius:6px; cursor:pointer;
+  box-shadow:0 3px 0 #2a1808;
+}
+.ability-btn:hover { background:linear-gradient(180deg, #a07050 0%, #705028 100%); }
+.ability-btn:disabled { opacity:0.45; cursor:default; background:linear-gradient(180deg, #403020 0%, #2a1808 100%); border-color:#604018; box-shadow:none; }
+
+#battlePlacementHint {
+  position:absolute; bottom:130px; left:50%; transform:translateX(-50%);
+  font-family:'Special Elite', monospace; font-size:11px; letter-spacing:2px; color:#80c0a0;
+  background:rgba(0,0,0,0.6); border:1px solid #406040; padding:5px 12px; border-radius:4px;
+  pointer-events:none;
+}
+#battleStart {
+  position:absolute; top:50%; right:18px; transform:translateY(-50%);
+  font-family:'Bungee', sans-serif; font-size:14px; letter-spacing:3px;
+  background:linear-gradient(180deg, #408040 0%, #205020 100%);
+  border:2px solid #80f060; color:#fff; padding:14px 22px; border-radius:6px; cursor:pointer;
+  box-shadow:0 4px 0 #103010, 0 0 30px rgba(128,240,96,0.35);
+}
+#battleStart:hover { background:linear-gradient(180deg, #50a050 0%, #306030 100%); }
+#pauseBtn { font-family:'Bungee', sans-serif; font-size:11px; letter-spacing:2px; background:rgba(20,12,8,0.85); border:1px solid #604018; color:#c89858; padding:6px 12px; border-radius:4px; cursor:pointer; }
+#pauseBtn:hover { background:#2a1810; color:#f0d4a0; }
+
+#toast {
+  position:absolute; top:60px; left:50%; transform:translate(-50%, -20px);
+  font-family:'Bungee', sans-serif; font-size:18px; letter-spacing:4px;
+  color:#fff0c0; text-shadow:0 2px 6px rgba(0,0,0,0.8);
+  background:rgba(20,12,8,0.7); border:2px solid #e0a050; padding:8px 24px; border-radius:6px;
+  opacity:0; pointer-events:none; transition:opacity 0.3s, transform 0.3s;
+  z-index:50;
+}
+#toast.show { opacity:1; transform:translate(-50%, 0); }
+
+/* Draft */
+#draftScreen { background:rgba(8,6,10,0.92); display:none; }
+#draftScreen.active { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px; }
+#draftLabel { font-family:'Bungee', sans-serif; font-size:24px; letter-spacing:6px; color:#f0d4a0; text-shadow:0 3px 0 #4a2810; margin-bottom:32px; pointer-events:auto; }
+#draftItems { display:flex; gap:20px; pointer-events:auto; }
+.draft-card {
+  width:220px; min-height:280px;
+  background:linear-gradient(180deg, #2a1810 0%, #1a1008 100%);
+  border:2px solid #604018; border-radius:10px;
+  padding:18px 14px; cursor:pointer;
+  display:flex; flex-direction:column; align-items:center; text-align:center;
+  transition:transform 0.12s, box-shadow 0.12s;
+}
+.draft-card:hover { transform:translateY(-6px) scale(1.04); box-shadow:0 14px 30px rgba(0,0,0,0.6); }
+.draft-card.rarity-C { border-color:#a0a0a8; }
+.draft-card.rarity-U { border-color:#80c060; box-shadow:0 0 18px rgba(128,192,96,0.18); }
+.draft-card.rarity-R { border-color:#e0a050; box-shadow:0 0 26px rgba(224,160,80,0.28); }
+.draft-rarity { font-family:'Bungee', sans-serif; font-size:10px; letter-spacing:3px; color:#a08060; margin-bottom:14px; }
+.draft-title { font-family:'Bungee', sans-serif; font-size:18px; letter-spacing:2px; color:#f0d4a0; margin-bottom:16px; }
+.draft-text { font-family:'Special Elite', monospace; font-size:12px; color:#c89858; line-height:1.6; }
+
+/* Shop */
+#shopScreen { background:rgba(8,6,10,0.92); display:none; }
+#shopScreen.active { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px; }
+.shop-header { font-family:'Bungee', sans-serif; font-size:22px; letter-spacing:6px; color:#80f0d0; margin-bottom:20px; pointer-events:auto; }
+#shopGold { font-family:'Special Elite', monospace; font-size:14px; color:#ffe080; margin-bottom:20px; pointer-events:auto; }
+#shopItems { display:flex; gap:14px; margin-bottom:24px; pointer-events:auto; }
+.shop-item {
+  width:200px; background:linear-gradient(180deg, #102818 0%, #081410 100%);
+  border:2px solid #40a080; border-radius:8px; padding:14px 12px;
+  display:flex; flex-direction:column; align-items:center; text-align:center;
+}
+.shop-item.sold { opacity:0.35; }
+.shop-item.poor { border-color:#604040; }
+.shop-rarity { font-family:'Bungee', sans-serif; font-size:9px; letter-spacing:2px; padding:2px 6px; border-radius:3px; color:#fff; margin-bottom:8px; }
+.shop-rarity.C { background:#606068; }
+.shop-rarity.U { background:#406030; }
+.shop-rarity.R { background:#806020; }
+.shop-title { font-family:'Bungee', sans-serif; font-size:14px; color:#80f0d0; margin-bottom:8px; }
+.shop-text { font-family:'Special Elite', monospace; font-size:11px; color:#80c0a0; min-height:60px; line-height:1.6; }
+.shop-buy {
+  margin-top:10px; font-family:'Bungee', sans-serif; font-size:11px; letter-spacing:2px;
+  background:#40a080; border:0; color:#0a1008; padding:8px 14px; border-radius:4px; cursor:pointer;
+}
+.shop-item.poor .shop-buy { background:#604040; color:#a08080; }
+.shop-item.sold .shop-buy { background:#404040; color:#806060; }
+
+/* Event */
+#eventScreen { background:rgba(8,6,10,0.92); display:none; }
+#eventScreen.active { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px; }
+#eventMsg { font-family:'Special Elite', monospace; font-size:18px; color:#d088f0; max-width:560px; text-align:center; margin-bottom:30px; line-height:1.6; pointer-events:auto; }
+#eventChoices { display:flex; flex-direction:column; gap:12px; pointer-events:auto; }
+
+/* Win/Loss */
+#winScreen, #lossScreen { background:rgba(8,6,10,0.96); display:none; }
+#winScreen.active, #lossScreen.active { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px; }
+.end-title { font-family:'Bungee', sans-serif; font-size:48px; letter-spacing:8px; margin-bottom:20px; text-shadow:0 4px 0 #1a0808; pointer-events:auto; }
+#winScreen .end-title { color:#80f060; }
+#lossScreen .end-title { color:#e04040; }
+.end-sub { font-family:'Special Elite', monospace; font-size:14px; color:#c89858; max-width:560px; text-align:center; line-height:1.6; margin-bottom:24px; pointer-events:auto; }
+#lossStats { font-family:'Special Elite', monospace; font-size:13px; color:#a08060; line-height:1.8; margin-bottom:30px; pointer-events:auto; }
+
+/* Loading */
+#loadingScreen { background:#0a0a0c; pointer-events:auto; }
+#loadingScreen.active { display:flex; align-items:center; justify-content:center; }
+#loadingScreen .panel-fs { display:flex; flex-direction:column; align-items:center; gap:12px; }
+.loader-spinner { width:42px; height:42px; border:4px solid #202028; border-top-color:#e0a050; border-radius:50%; animation:spin 1s linear infinite; }
+.loader-text { font-family:'Bungee', sans-serif; font-size:13px; letter-spacing:4px; color:#806040; }
+@keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div id="arena"></div>
+
+<!-- TITLE -->
+<div class="screen" id="titleScreen">
+  <div class="panel-fs">
+    <div class="title-h1">TIN SOLDIERS</div>
+    <div class="title-h2">ATTIC WAR</div>
+    <div class="title-tag">A roguelite squad-tactics rampage through a giant house. Plastic toy soldiers vs. windup robots, rats, and the family cat. Place. Move. Shoot. Survive.</div>
+    <div class="title-btns">
+      <button class="menu-btn primary" onclick="startNewRun()">▶ NEW RUN</button>
+    </div>
+  </div>
+</div>
+
+<!-- MAP -->
+<div class="screen" id="mapScreen">
+  <div class="map-hud panel">
+    <div><span class="lbl">ROOM</span><span id="mapRoomLabel">—</span></div>
+    <div><span class="lbl">HP</span><span id="mapHp">100/100</span></div>
+    <div><span class="lbl">PARTS</span><span id="mapGold">8</span></div>
+    <div style="display:flex;align-items:center"><span class="lbl">SQUAD</span><div id="mapSquad"></div></div>
+    <div style="margin-left:auto"><button class="menu-btn" style="padding:6px 14px;font-size:10px" onclick="goTitle()">QUIT</button></div>
+  </div>
+  <div class="map-graph-wrap">
+    <div id="mapGraph"></div>
+  </div>
+  <div class="map-foot">PICK A NODE — ⚔ FIGHT · ☠ ELITE · ⛁ SHOP · ? EVENT · ★ BOSS</div>
+</div>
+
+<!-- BATTLE -->
+<div class="screen" id="battleScreen">
+  <div class="battle-top">
+    <div class="group">
+      <div id="battleRoom">—</div>
+    </div>
+    <div class="group">
+      <span class="battle-pill hp" id="battleHp">HP 100/100</span>
+      <span class="battle-pill gold" id="battleGold">0 PARTS</span>
+      <span class="battle-pill wave" id="battleWave">PLACEMENT</span>
+      <button id="pauseBtn" onclick="pauseToggle()"><span id="pauseLabel">❚❚ PAUSE</span></button>
+    </div>
+  </div>
+  <div id="battlePlacementHint">TAP A SOLDIER BELOW, THEN TAP THE GLOWING ZONE TO DEPLOY</div>
+  <button id="battleStart" onclick="startCombat()">▶ START COMBAT (0 DEPLOYED)</button>
+  <div id="toast"></div>
+  <div class="battle-bottom">
+    <div id="squadBarLabel">YOUR SQUAD</div>
+    <div id="squadBar"></div>
+  </div>
+</div>
+
+<!-- DRAFT -->
+<div class="screen" id="draftScreen">
+  <div id="draftLabel">PICK ONE</div>
+  <div id="draftItems"></div>
+  <button class="menu-btn" style="margin-top:30px" onclick="skipDraft()">SKIP (+5 PARTS)</button>
+</div>
+
+<!-- SHOP -->
+<div class="screen" id="shopScreen">
+  <div class="shop-header">⛁ FIELD SHOP</div>
+  <div id="shopGold">0 PARTS</div>
+  <div id="shopItems"></div>
+  <button class="menu-btn primary" onclick="leaveShop()">LEAVE SHOP</button>
+</div>
+
+<!-- EVENT -->
+<div class="screen" id="eventScreen">
+  <div id="eventMsg"></div>
+  <div id="eventChoices"></div>
+</div>
+
+<!-- WIN -->
+<div class="screen" id="winScreen">
+  <div class="end-title">VICTORY</div>
+  <div class="end-sub">You and your tin soldiers cleared the whole damn house. The kid's mom is gonna be so confused.</div>
+  <button class="menu-btn primary" onclick="goTitle()">MAIN MENU</button>
+</div>
+
+<!-- LOSS -->
+<div class="screen" id="lossScreen">
+  <div class="end-title">SQUAD WIPED</div>
+  <div class="end-sub">Your soldiers lie scattered across the battlefield, painted plastic gleaming under the lamp.</div>
+  <div id="lossStats"></div>
+  <button class="menu-btn primary" onclick="goTitle()">MAIN MENU</button>
+</div>
+
+<!-- LOADING (default visible) -->
+<div class="screen active" id="loadingScreen">
+  <div class="panel-fs">
+    <div class="loader-spinner"></div>
+    <div class="loader-text">DEPLOYING…</div>
+  </div>
+</div>
+
+<script>
+// WebGL precision shim
+(function patchWebGL(){function shim(p){if(!p||!p.getShaderPrecisionFormat)return;const o=p.getShaderPrecisionFormat;p.getShaderPrecisionFormat=function(){try{const r=o.apply(this,arguments);if(r)return r}catch(e){}return{precision:23,rangeMax:127,rangeMin:127}}}if(typeof WebGLRenderingContext!=='undefined')shim(WebGLRenderingContext.prototype);if(typeof WebGL2RenderingContext!=='undefined')shim(WebGL2RenderingContext.prototype)})();
+</script>
+<!--THREEJS-->
+<!--GAMEJS-->
+</body>
+</html>
