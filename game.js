@@ -4253,6 +4253,9 @@ function bootGame() {
   document.getElementById('loadingScreen').classList.remove('active');
 }
 
+const BUILD_TAG = 'v8.1-copyerr-2026-05-20';
+console.log('[TinSoldiers] build:', BUILD_TAG);
+try { document.addEventListener('DOMContentLoaded', () => { const t = document.getElementById('titleBuildTag'); if (t) t.textContent = 'BUILD ' + BUILD_TAG; }); } catch(e){}
 function showInitError(e) {
   // Gather diagnostics so the user can paste them
   function probeWebGL() {
@@ -4288,6 +4291,7 @@ function showInitError(e) {
     'Screen:   ' + window.innerWidth + 'x' + window.innerHeight + ' @ ' + (window.devicePixelRatio || 1) + 'x',
     'URL:      ' + location.href,
     'Time:     ' + new Date().toISOString(),
+    'Build:    ' + (typeof BUILD_TAG !== 'undefined' ? BUILD_TAG : 'unknown'),
   ];
   const report = lines.join('\n');
   const ls = document.getElementById('loadingScreen');
