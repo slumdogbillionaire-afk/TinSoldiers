@@ -281,10 +281,11 @@ const STATE = {
 };
 
 const DIFFICULTY_LEVELS = {
-  easy:   { name:'EASY',   aiSpeedMul:0.6, aiSmartMul:0.55, enemyHpMul:0.75, enemyStartEnergy:3, playerStartEnergyBonus:2 },
-  normal: { name:'NORMAL', aiSpeedMul:1.0, aiSmartMul:1.0,  enemyHpMul:1.0,  enemyStartEnergy:5, playerStartEnergyBonus:0 },
-  hard:   { name:'HARD',   aiSpeedMul:1.25,aiSmartMul:1.15, enemyHpMul:1.15, enemyStartEnergy:7, playerStartEnergyBonus:0 },
-  brutal: { name:'BRUTAL', aiSpeedMul:1.55,aiSmartMul:1.3,  enemyHpMul:1.35, enemyStartEnergy:9, playerStartEnergyBonus:0 },
+  easy:    { name:'EASY',         aiSpeedMul:0.6, aiSmartMul:0.55, enemyHpMul:0.75, enemyStartEnergy:3,  playerStartEnergyBonus:2,  playerHpMul:1,  playerDmgMul:1,  enemyDmgMul:1    },
+  normal:  { name:'NORMAL',       aiSpeedMul:1.0, aiSmartMul:1.0,  enemyHpMul:1.0,  enemyStartEnergy:5,  playerStartEnergyBonus:0,  playerHpMul:1,  playerDmgMul:1,  enemyDmgMul:1    },
+  hard:    { name:'HARD',         aiSpeedMul:1.25,aiSmartMul:1.15, enemyHpMul:1.15, enemyStartEnergy:7,  playerStartEnergyBonus:0,  playerHpMul:1,  playerDmgMul:1,  enemyDmgMul:1    },
+  brutal:  { name:'BRUTAL',       aiSpeedMul:1.55,aiSmartMul:1.3,  enemyHpMul:1.35, enemyStartEnergy:9,  playerStartEnergyBonus:0,  playerHpMul:1,  playerDmgMul:1,  enemyDmgMul:1    },
+  rob_albrecht: { name:'ROB ALBRECHT', aiSpeedMul:0.05, aiSmartMul:0.0, enemyHpMul:0.10, enemyStartEnergy:0, playerStartEnergyBonus:25, playerHpMul:10, playerDmgMul:10, enemyDmgMul:0.05 },
 };
 
 function loadProgress() {
@@ -1503,7 +1504,9 @@ function spawnUnit(unitKey, side, fx, fz) {
     const ox = (i % 2) * 0.4 - 0.15;
     const oz = (i - (count - 1) / 2) * 0.5;
     const diff = (DIFFICULTY_LEVELS && DIFFICULTY_LEVELS[STATE.difficulty || 'normal']) || DIFFICULTY_LEVELS.normal;
-    const hpMul = (side === 'enemy' && STATE.currentMission) ? STATE.currentMission.enemyHpMul * diff.enemyHpMul : 1;
+    const hpMul = (side === 'enemy' && STATE.currentMission)
+      ? STATE.currentMission.enemyHpMul * diff.enemyHpMul
+      : (side === 'player' ? (diff.playerHpMul || 1) : 1);
     const unit = {
       id:nextId++, key:unitKey, def, side,
       x:fx + ox, z:fz + oz,
@@ -1550,11 +1553,12 @@ function createTowers() {
       dmg:T.dmg, range:T.range, atkSpeed:T.atkSpeed, radius:1.3, targets:T.targets, splash:T.splash || 0,
       label, flash:0, stunned:0, cooldown:0 };
   }
+  const php = diff.playerHpMul || 1;
   const list = [
-    { side:'player', faction:playerFaction, role:'hq', type:'hq', x:playerHQX, z:0, hp:4500, maxHp:4500, dmg:35, range:12, atkSpeed:1.1, radius:2.8, targets:'ground_air', flash:0, stunned:0, cooldown:0 },
-    mkTower('player', playerFaction, topType, playerTowerX, LANE_TOP_Z, 'T', 1),
-    mkTower('player', playerFaction, midType, playerTowerX, LANE_MID_Z, 'M', 1),
-    mkTower('player', playerFaction, botType, playerTowerX, LANE_BOT_Z, 'B', 1),
+    { side:'player', faction:playerFaction, role:'hq', type:'hq', x:playerHQX, z:0, hp:4500*php, maxHp:4500*php, dmg:35, range:12, atkSpeed:1.1, radius:2.8, targets:'ground_air', flash:0, stunned:0, cooldown:0 },
+    mkTower('player', playerFaction, topType, playerTowerX, LANE_TOP_Z, 'T', php),
+    mkTower('player', playerFaction, midType, playerTowerX, LANE_MID_Z, 'M', php),
+    mkTower('player', playerFaction, botType, playerTowerX, LANE_BOT_Z, 'B', php),
     { side:'enemy', faction:enemyFaction, role:'hq', type:'hq', x:enemyHQX, z:0, hp:4500*ehp, maxHp:4500*ehp, dmg:35, range:12, atkSpeed:1.1, radius:2.8, targets:'ground_air', flash:0, stunned:0, cooldown:0 },
     mkTower('enemy', enemyFaction, topType, enemyTowerX, LANE_TOP_Z, 'T', ehp),
     mkTower('enemy', enemyFaction, midType, enemyTowerX, LANE_MID_Z, 'M', ehp),
@@ -1774,6 +1778,10 @@ function applyDamage(t, dmg, attacker) {
     const mul = getDmgMul(attacker.def.roleKey, t.def.roleKey);
     dmg *= mul;
   }
+  // Difficulty damage muls
+  const _diff = (DIFFICULTY_LEVELS && DIFFICULTY_LEVELS[STATE.difficulty || 'normal']) || DIFFICULTY_LEVELS.normal;
+  if (attacker && attacker.side === 'player' && _diff.playerDmgMul) dmg *= _diff.playerDmgMul;
+  else if (attacker && attacker.side === 'enemy' && _diff.enemyDmgMul) dmg *= _diff.enemyDmgMul;
   if (t.aegis && t.aegis > 0) dmg *= 0.5;
   // Track
   if (t.side === 'player') STATE.stats.dmgTaken += dmg;
@@ -3788,7 +3796,15 @@ function renderDifficultyPicker(containerId) {
     const c = document.createElement('div');
     c.className = 'tower-choice' + (cur === key ? ' selected' : '');
     c.style.padding = '8px 4px';
-    c.innerHTML = `<div class="tc-name" style="font-size:10px;">${d.name}</div>`;
+    const isRA = key === 'rob_albrecht';
+    if (isRA) {
+      c.style.background = 'linear-gradient(135deg, #6a1f1f 0%, #a04830 50%, #d4a050 100%)';
+      c.style.borderColor = '#ffe080';
+      c.style.boxShadow = '0 0 12px rgba(255,224,128,0.55)';
+      c.innerHTML = `<div class="tc-name" style="font-size:9px;color:#fff0c8;letter-spacing:1px;text-shadow:0 1px 2px rgba(0,0,0,0.7)">${d.name}</div><div class="tc-stats" style="font-size:8px;color:#ffe080;margin-top:2px">★ AUTO-WIN</div>`;
+    } else {
+      c.innerHTML = `<div class="tc-name" style="font-size:10px;">${d.name}</div>`;
+    }
     c.onclick = () => { STATE.progress.difficulty = key; saveProgress(); renderDifficultyPicker(containerId); playSound('ui_select'); };
     el.appendChild(c);
   }
