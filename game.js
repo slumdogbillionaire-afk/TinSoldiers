@@ -3440,12 +3440,8 @@ function loop(ts) {
   if (!renderer || !scene || !camera) {
     if (!STATE._initWarned) {
       STATE._initWarned = true;
-      console.error('Tin Soldiers: renderer/scene/camera missing — initThree() likely failed. Check earlier console errors (WebGL? Three.js load?).');
-      const ls = document.getElementById('loadingScreen');
-      if (ls) {
-        ls.classList.add('active');
-        ls.textContent = '3D INIT FAILED — check browser console (F12)';
-      }
+      console.error('Tin Soldiers: renderer/scene/camera missing — initThree() likely failed.');
+      if (typeof showInitError === 'function') showInitError(new Error('renderer/scene/camera not initialised'));
     }
     return;
   }
@@ -4249,16 +4245,103 @@ function bootGame() {
     initThree();
   } catch (e) {
     console.error('initThree failed:', e);
-    const ls = document.getElementById('loadingScreen');
-    if (ls) {
-      ls.classList.add('active');
-      ls.textContent = '3D INIT FAILED: ' + (e.message || 'unknown error');
-    }
+    showInitError(e);
     return;
   }
   setupInput();
   goTitle();
   document.getElementById('loadingScreen').classList.remove('active');
+}
+
+function showInitError(e) {
+  // Gather diagnostics so the user can paste them
+  function probeWebGL() {
+    try {
+      const c = document.createElement('canvas');
+      const gl = c.getContext('webgl2') || c.getContext('webgl') || c.getContext('experimental-webgl');
+      if (!gl) return { webgl:false };
+      const dbg = gl.getExtension && gl.getExtension('WEBGL_debug_renderer_info');
+      return {
+        webgl: true,
+        version: gl.getParameter && gl.getParameter(gl.VERSION),
+        glsl: gl.getParameter && gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
+        vendor: dbg && gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL),
+        renderer: dbg && gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL),
+        maxTex: gl.getParameter && gl.getParameter(gl.MAX_TEXTURE_SIZE),
+      };
+    } catch (err) { return { webgl:false, probeError: String(err && err.message || err) }; }
+  }
+  const wg = probeWebGL();
+  const lines = [
+    '── TIN SOLDIERS — 3D INIT FAILED ──',
+    'Error:    ' + (e && (e.message || e.toString()) || 'unknown'),
+    'Stack:    ' + (e && e.stack ? e.stack.split('\n').slice(0, 4).join(' | ') : 'n/a'),
+    'THREE:    ' + (typeof THREE !== 'undefined' ? THREE.REVISION : 'NOT LOADED'),
+    'WebGL:    ' + (wg.webgl ? 'available' : ('UNAVAILABLE' + (wg.probeError ? ' (' + wg.probeError + ')' : ''))),
+    'GL ver:   ' + (wg.version || 'n/a'),
+    'GLSL:     ' + (wg.glsl || 'n/a'),
+    'Vendor:   ' + (wg.vendor || 'n/a'),
+    'Renderer: ' + (wg.renderer || 'n/a'),
+    'MaxTex:   ' + (wg.maxTex || 'n/a'),
+    'UA:       ' + navigator.userAgent,
+    'Lang:     ' + navigator.language,
+    'Screen:   ' + window.innerWidth + 'x' + window.innerHeight + ' @ ' + (window.devicePixelRatio || 1) + 'x',
+    'URL:      ' + location.href,
+    'Time:     ' + new Date().toISOString(),
+  ];
+  const report = lines.join('\n');
+  const ls = document.getElementById('loadingScreen');
+  if (!ls) return;
+  ls.classList.add('active');
+  ls.style.background = '#0a0608';
+  ls.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'max-width:680px;width:90%;margin:auto;padding:20px;font-family:Consolas,Menlo,monospace;color:#e8c89e;background:rgba(20,12,8,0.8);border:1px solid #604018;border-radius:8px';
+  const title = document.createElement('div');
+  title.textContent = '3D INIT FAILED';
+  title.style.cssText = 'font-family:Bungee,sans-serif;font-size:18px;letter-spacing:4px;color:#ff8060;margin-bottom:10px;text-align:center';
+  wrap.appendChild(title);
+  const sub = document.createElement('div');
+  sub.textContent = 'Copy this report and share it so we can fix the cause:';
+  sub.style.cssText = 'font-size:12px;color:#a08060;margin-bottom:10px;text-align:center';
+  wrap.appendChild(sub);
+  const ta = document.createElement('textarea');
+  ta.value = report;
+  ta.readOnly = true;
+  ta.style.cssText = 'width:100%;height:240px;background:#0a0604;color:#fce8c8;border:1px solid #604018;border-radius:4px;padding:8px;font-family:Consolas,Menlo,monospace;font-size:11px;line-height:1.5;resize:vertical;user-select:text;-webkit-user-select:text;white-space:pre;overflow:auto';
+  ta.onclick = () => { ta.select(); };
+  wrap.appendChild(ta);
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:8px;margin-top:10px;justify-content:center';
+  const copyBtn = document.createElement('button');
+  copyBtn.textContent = '📋 COPY ERROR';
+  copyBtn.style.cssText = 'padding:8px 14px;background:#604018;border:1px solid #806040;color:#fce8c8;font-family:Bungee,sans-serif;font-size:11px;letter-spacing:2px;border-radius:4px;cursor:pointer';
+  copyBtn.onclick = async () => {
+    let ok = false;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try { await navigator.clipboard.writeText(report); ok = true; } catch (err) { ok = false; }
+    }
+    if (!ok) {
+      try {
+        ta.focus(); ta.select();
+        ok = document.execCommand && document.execCommand('copy');
+      } catch (err) { ok = false; }
+    }
+    copyBtn.textContent = ok ? '✓ COPIED' : 'TAP THE BOX → CTRL/CMD+C';
+    if (ok) setTimeout(() => { copyBtn.textContent = '📋 COPY ERROR'; }, 1600);
+  };
+  btnRow.appendChild(copyBtn);
+  const reload = document.createElement('button');
+  reload.textContent = '⟲ RELOAD';
+  reload.style.cssText = 'padding:8px 14px;background:#403018;border:1px solid #604018;color:#c89858;font-family:Bungee,sans-serif;font-size:11px;letter-spacing:2px;border-radius:4px;cursor:pointer';
+  reload.onclick = () => location.reload();
+  btnRow.appendChild(reload);
+  wrap.appendChild(btnRow);
+  const hint = document.createElement('div');
+  hint.innerHTML = 'Likely fixes:<br>• Hard refresh (Ctrl+Shift+R / Cmd+Shift+R)<br>• Enable Hardware Acceleration in browser settings<br>• Try Chrome or Firefox on desktop<br>• If in an in-app browser (Twitter/FB/Slack), open in Safari/Chrome';
+  hint.style.cssText = 'margin-top:14px;font-size:11px;color:#a08060;line-height:1.7';
+  wrap.appendChild(hint);
+  ls.appendChild(wrap);
 }
 
 if (window.__threeLoaded) bootGame();
